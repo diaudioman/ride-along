@@ -176,3 +176,71 @@ test("typing a stop cannot silently add the first worldwide match", async () => 
     app.dom.window.close();
   }
 });
+
+test("hotel finish retains the selected destination and edit plan restores endpoints", async () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      `state.regionCenter={name:'Meteor Crater',lat:35.03,lon:-111.02};
+ state.planStops=[]; document.querySelector('#customRegion').value='Meteor Crater';
+ document.querySelector('#planningMode').value='places';
+ resolvePlannerEndpoints=async()=>({start:{name:'Sedona',lat:34.87,lon:-111.76},finish:{name:'Hotel',lat:34.86,lon:-111.8}});
+ discoverRegionCandidates=async()=>[];`,
+      app.context,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(
+      vm.runInContext("state.trip.stops[0].name", app.context),
+      "Meteor Crater",
+    );
+    assert.equal(
+      vm.runInContext("state.trip.finish.name", app.context),
+      "Hotel",
+    );
+    app.$("#newPlan").click();
+    assert.equal(app.$("#customStart").value, "Sedona");
+    assert.equal(app.$("#customFinish").value, "Hotel");
+    assert.equal(app.$("#customRegion").value, "Meteor Crater");
+  } finally {
+    app.dom.window.close();
+  }
+});
+test("Discover cannot add an overseas place when driving is unverified", async () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      `state.trip={start:{name:'Sedona',lat:34.87,lon:-111.76},finish:{name:'Crater',lat:35.03,lon:-111.02},stops:[]};
+ rankByDriving=async list=>list.map(p=>({...p,detour:{index:0,min:10000,mi:8000}}));`,
+      app.context,
+    );
+    await vm.runInContext(
+      "addToTrip({id:'bad',name:'Overseas',lat:39,lon:42,visit:30})",
+      app.context,
+    );
+    assert.equal(vm.runInContext("state.trip.stops.length", app.context), 0);
+  } finally {
+    app.dom.window.close();
+  }
+});
+test("completed stops remain available for manual story replay", () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      "state.trip={stops:[{id:'done',name:'Completed museum',lat:35,lon:-111,done:true}]}",
+      app.context,
+    );
+    assert.equal(
+      vm.runInContext(
+        "allTourPlaces(true).some(p=>p.id==='done')",
+        app.context,
+      ),
+      true,
+    );
+    assert.equal(
+      vm.runInContext("allTourPlaces().some(p=>p.id==='done')", app.context),
+      false,
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});

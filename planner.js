@@ -44,11 +44,37 @@ async function resolvePlannerEndpoints() {
   }
   return { start: await resolve(start), finish: await resolve(finish) };
 }
+function plannedStops(start, finish) {
+  const stops = state.planStops.map((p) => ({ ...p }));
+  const destination = state.regionCenter;
+  const actualFinish = finish === "return" ? start : finish;
+  if (
+    RouteEfficiency.mapped(destination) &&
+    !(
+      RouteEfficiency.mapped(actualFinish) &&
+      miles(destination, actualFinish) < 0.08
+    ) &&
+    !(RouteEfficiency.mapped(start) && miles(destination, start) < 0.08) &&
+    !stops.some(
+      (p) => RouteEfficiency.mapped(p) && miles(destination, p) < 0.08,
+    )
+  ) {
+    stops.push({
+      ...destination,
+      id: "destination-" + destination.lat + "," + destination.lon,
+      visit: 30,
+      cats: ["Destination"],
+      desc: "Your selected destination.",
+      requiredDestination: true,
+    });
+  }
+  return stops;
+}
 function plannerTrip(start, finish) {
   return {
     start,
     finish,
-    stops: state.planStops.map((p) => ({ ...p })),
+    stops: plannedStops(start, finish),
     region: state.regionCenter?.name || "",
   };
 }
@@ -250,7 +276,10 @@ async function loadPlanner(seq, force) {
         },
         { mi: 0, min: 0 },
       );
-    let visit = state.planStops.reduce((sum, p) => sum + (+p.visit || 30), 0),
+    let visit = (trip?.stops || state.planStops).reduce(
+        (sum, p) => sum + (+p.visit || 30),
+        0,
+      ),
       total = drive.min + visit,
       budget = $("#planningMode").value === "time" ? +$("#duration").value : 0;
     $("#planMapStatus").textContent = trip
@@ -370,5 +399,56 @@ document.querySelector("#planUseLocation").onclick = () => {
 };
 
 for (const id of ["#planRadius", "#planDetour"]) {
-  document.querySelector(id).onchange = () => refreshPlanner();
+  document.querySelector(id).onchange = () => previewPlanRoute();
+}
+
+// Let users confirm custom endpoints, including intentional long-distance trips.
+for (const kind of ["Start", "Finish"]) {
+  const input = document.querySelector("#custom" + kind);
+  const results = document.createElement("div");
+  results.className = "stopSuggestions hidden";
+  results.setAttribute("aria-label", kind + " location matches");
+  input.parentElement.append(results);
+  let timer,
+    request = 0;
+  input.oninput = () => {
+    const seq = ++request,
+      text = input.value.trim();
+    clearTimeout(timer);
+    results.replaceChildren();
+    results.classList.add("hidden");
+    refreshPlanner();
+    if (text.length < 3) return;
+    timer = setTimeout(async () => {
+      try {
+        const found = await geocodeMany(text, 8, state.regionCenter);
+        if (seq !== request || input.value.trim() !== text) return;
+        results.classList.remove("hidden");
+        if (!found.length)
+          results.textContent = "No matches. Add city and state.";
+        for (const point of found) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "stopSuggestion";
+          button.textContent = point.display || point.name;
+          button.onclick = () => {
+            input.value = point.display || point.name;
+            const center = state.regionCenter;
+            plannerGeoCache.set(
+              JSON.stringify([input.value, center?.lat, center?.lon]),
+              Promise.resolve({ ...point, name: input.value }),
+            );
+            results.classList.add("hidden");
+            previewPlanRoute();
+          };
+          results.append(button);
+        }
+      } catch {
+        if (seq === request) {
+          results.textContent = "Search unavailable. Try again shortly.";
+          results.classList.remove("hidden");
+        }
+      }
+    }, 600);
+  };
 }

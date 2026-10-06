@@ -6,6 +6,7 @@ function harness() {
   class Element {
     constructor() {
       this.children = [];
+      this.parentElement = { append() {} };
       this.classList = { add() {}, remove() {} };
       this.value = "";
       this.textContent = "";

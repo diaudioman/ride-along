@@ -105,7 +105,11 @@ for (const [id, key] of [
 ].forEach((i) => {
   let b = document.createElement("button");
   b.type = "button";
-  b.className = "chip on";
+  b.className =
+    "chip" +
+    (!Array.isArray(state.prefs.interests) || state.prefs.interests.includes(i)
+      ? " on"
+      : "");
   b.textContent = i;
   b.onclick = () => {
     b.classList.toggle("on");
@@ -172,7 +176,8 @@ function endpoint(which) {
       : null;
   if (PRESETS[v]) return PRESETS[v];
   if (v === "gps")
-    return state.location
+    return state.location &&
+      Date.now() - (state.location.at || 0) < 15 * 60 * 1000
       ? { name: "Current GPS location", ...state.location }
       : null;
   if (v === "return") return "return";
@@ -305,7 +310,20 @@ async function rankByDriving(list, trip) {
   );
 }
 let previewSeq = 0;
+const planSettings = [
+  "walking",
+  "admission",
+  "dirt",
+  "style",
+  "pace",
+  "planRadius",
+  "planDetour",
+];
+for (const id of planSettings)
+  if (state.prefs[id]) $("#" + id).value = state.prefs[id];
 function previewPlanRoute() {
+  for (const id of planSettings) state.prefs[id] = $("#" + id).value;
+  state.prefs.interests = $$("#interests .on").map((b) => b.textContent);
   state.prefs = {
     ...state.prefs,
     startMode: $("#start").value,
@@ -621,15 +639,14 @@ async function build() {
     $("#planMsg").textContent = "Enter a custom region or destination.";
     return;
   }
-  try {
-    let rc =
-      state.regionCenter &&
-      state.regionCenter.name &&
-      $("#customRegion").value.trim() === state.regionCenter.name
-        ? state.regionCenter
-        : await geocodeNear(region);
-    if (rc) state.regionCenter = rc;
-  } catch (e) {}
+  if (
+    !RouteEfficiency.mapped(state.regionCenter) ||
+    state.regionCenter.name !== region
+  ) {
+    $("#planMsg").textContent =
+      "Choose your destination from the search results first.";
+    return;
+  }
   ({ start, finish } = await resolvePlannerEndpoints());
   if (!start) {
     $("#planMsg").textContent =
@@ -642,12 +659,13 @@ async function build() {
     $("#planMsg").textContent = "Enter your hotel or custom destination.";
     return;
   }
-  const distant = distantTripStops({ start, finish, stops: state.planStops });
+  const selectedStops = plannedStops(start, finish);
+  const distant = distantTripStops({ start, finish, stops: selectedStops });
   const checkedRoute = distant.length
     ? await roadRoute(
         [
           start,
-          ...state.planStops,
+          ...selectedStops,
           ...(typeof finish === "object"
             ? [finish]
             : finish === "return"
@@ -667,7 +685,7 @@ async function build() {
   let curated = plannerCandidates.length
     ? plannerCandidates
     : await discoverRegionCandidates(state.regionCenter, region);
-  let stops = state.planStops.map((p) => ({
+  let stops = selectedStops.map((p) => ({
       ...p,
       done: false,
       skipped: false,
@@ -683,6 +701,8 @@ async function build() {
   });
   let candidates = curated.filter(
     (p) =>
+      RouteEfficiency.mapped(p) &&
+      miles(state.regionCenter, p) <= (+$("#planRadius").value || 5) &&
       matchesPlanPreferences(p) &&
       !stops.some((s) => s.id === p.id || s.name === p.name),
   );
@@ -702,6 +722,12 @@ async function build() {
       );
     });
     const p = candidates.shift();
+    const insertion = RouteEfficiency.bestInsertion(
+      RouteEfficiency.context({ start: cur, finish, stops: [] }),
+      p,
+      roadEstimate,
+    );
+    if (!insertion || insertion.min > (+$("#planDetour").value || 20)) continue;
     let leg = roadEstimate(cur, p),
       reserve =
         finish === "last"
@@ -767,6 +793,7 @@ async function build() {
   }
   state.trip = {
     region,
+    destination: { ...state.regionCenter },
     budget,
     timeOverride: initialOverride,
     planningMode: placesFirst ? "places" : "time",
@@ -931,8 +958,9 @@ function renderTripMap(fit = true) {
     return;
   }
   addMarker(t.start, "S", "startPin", "Start");
+  const excluded = new Set(distantTripStops(t).map((p) => p.id));
   t.stops
-    .filter((p) => !p.skipped)
+    .filter((p) => !p.skipped && !excluded.has(p.id))
     .forEach((p, i) => addMarker(p, String(i + 1), "", p.name));
   let fin = mappedFinish(t);
   if (fin && !(t.finish === "return" && t.start.lat != null))
@@ -940,7 +968,7 @@ function renderTripMap(fit = true) {
   let line = [t.start, ...t.stops.filter((p) => !p.skipped), fin]
     .filter((p) => p && p.lat != null && p.lon != null)
     .map((p) => [+p.lat, +p.lon]);
-  if (line.length > 1)
+  if (t.roadVerified && t.roadGeometry?.length > 1)
     L.polyline(t.roadGeometry?.map((p) => [p.lat, p.lon]) || line, {
       weight: 4,
       opacity: 0.72,
@@ -951,7 +979,6 @@ function renderTripMap(fit = true) {
     gpsMapMarker = L.marker(ll, { icon: mapIcon("●", "gpsPin") })
       .addTo(tripMapLayer)
       .bindPopup("<b>Your GPS location</b>");
-    pts.push(ll);
   }
   if (fit && pts.length)
     tripMap.fitBounds(pts, { padding: [28, 28], maxZoom: 14 });
@@ -960,7 +987,7 @@ function renderTripMap(fit = true) {
     line.length > 1
       ? t.roadVerified
         ? "Road route shown. Open Maps for turn-by-turn navigation."
-        : "Dashed line shows stop order; road route is not verified."
+        : "Road route unavailable. Pins show mapped locations only."
       : "Some custom locations do not have coordinates yet. Search for the place in Discover to add a mapped stop.";
 }
 function locateOnMap() {
@@ -1010,7 +1037,7 @@ function renderTrip() {
   $("#tripBudget").value = String(t.budget || 0);
   $("#timeOverride").checked = !!t.timeOverride;
   $("#tripSummary").innerHTML =
-    `<b>${escapeHTML(t.region)}</b><p>${t.estimated} min estimated total${t.budget ? ` of ${t.budget} min target` : " • time ignored"} • ${t.stops.length} stops</p><p class="meta">~${driveTotal} min driving + ${visitTotal} min at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${t.estimated - t.budget} min over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${t.finalLeg.min} min${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
+    `<b>${escapeHTML(t.region)}</b><p>${formatMinutes(t.estimated)} estimated total${t.budget ? ` of ${t.budget} min target` : " • time ignored"} • ${t.stops.length} stops</p><p class="meta">~${formatMinutes(driveTotal)} driving + ${formatMinutes(visitTotal)} at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${t.estimated - t.budget} min over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${formatMinutes(t.finalLeg.min)}${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
   const distant = distantTripStops(t);
   if (distant.length) {
     $("#tripSummary").innerHTML =
@@ -1102,6 +1129,33 @@ $("#timeOverride").onchange = () => {
 };
 $("#newPlan").onclick = () => {
   if (state.trip) {
+    const t = state.trip;
+    if (RouteEfficiency.mapped(t.destination))
+      state.regionCenter = { ...t.destination };
+    $("#customRegion").value = state.regionCenter?.name || t.region;
+    $("#start").value = "custom";
+    $("#customStart").value = t.start.name;
+    plannerGeoCache.set(
+      JSON.stringify([
+        t.start.name,
+        state.regionCenter?.lat,
+        state.regionCenter?.lon,
+      ]),
+      Promise.resolve(t.start),
+    );
+    $("#finish").value = typeof t.finish === "string" ? t.finish : "custom";
+    if (typeof t.finish === "object") {
+      $("#customFinish").value = t.finish.name;
+      plannerGeoCache.set(
+        JSON.stringify([
+          t.finish.name,
+          state.regionCenter?.lat,
+          state.regionCenter?.lon,
+        ]),
+        Promise.resolve(t.finish),
+      );
+    }
+    if (t.budget) $("#duration").value = String(t.budget);
     state.planStops = state.trip.stops
       .filter((p) => !p.skipped)
       .map((p) => ({ ...p }));
@@ -1335,10 +1389,8 @@ async function geocodeMany(text, limit = 8, near = null) {
 async function geocodeNear(text) {
   let q = (text || "").trim();
   if (!q) return state.location || null;
-  let a = await geocodeMany(q, 1);
-  return a[0]
-    ? { lat: a[0].lat, lon: a[0].lon, name: a[0].display || a[0].name }
-    : null;
+  let a = await geocodeMany(q, 8);
+  return a[0] ? { ...a[0], name: a[0].display || a[0].name } : null;
 }
 $("#findRegionThings").onclick = requestPlannerSuggestions;
 function overpassType(tags = {}) {
@@ -1351,7 +1403,9 @@ function overpassType(tags = {}) {
     "place"
   );
 }
+let liveSearchSeq = 0;
 async function searchLivePlaces(opts = {}) {
+  const searchSeq = ++liveSearchSeq;
   let q = ($("#liveQuery").value || "").trim(),
     nearText = $("#liveNear").value.trim(),
     near = opts.near || null;
@@ -1360,12 +1414,14 @@ async function searchLivePlaces(opts = {}) {
   $("#liveResults").innerHTML = "";
   try {
     near = near || (await geocodeNear(nearText));
+    if (searchSeq !== liveSearchSeq) return;
     let categoryWords =
       /^(attractions?|things|sights?|viewpoint|scenic|museum|parks?|historic|history|ruins?|restaurant|food|coffee|cafe|trail|hike)(\s+(and|&|or)\s+)?/i;
     let looksNamed = !categoryWords.test(q);
     if (looksNamed) {
       let exact = await geocodeMany(q + (nearText ? " " + nearText : ""), 10);
       if (!exact.length && nearText) exact = await geocodeMany(q, 10);
+      if (searchSeq !== liveSearchSeq) return;
       if (exact.length) {
         liveSearchResults = exact.map((p) => ({
           ...p,
@@ -1422,6 +1478,7 @@ async function searchLivePlaces(opts = {}) {
     if (!r.ok) throw new Error("search service unavailable");
     let data = await r.json(),
       seen = new Set();
+    if (searchSeq !== liveSearchSeq) return;
     liveSearchResults = (data.elements || [])
       .map((e, idx) => {
         let t = e.tags || {},
@@ -1479,6 +1536,7 @@ async function searchLivePlaces(opts = {}) {
       ? `${liveSearchResults.length} places found within about 10 miles. Results are live OpenStreetMap data; verify details before visiting.`
       : "No matching places found nearby. Try a broader search or category.";
   } catch (e) {
+    if (searchSeq !== liveSearchSeq) return;
     $("#liveStatus").textContent =
       "Live search could not load right now. Check your connection or try again shortly.";
   }
@@ -1544,8 +1602,14 @@ async function searchAlongRoute() {
   $("#runRouteSearch").disabled = true;
   $("#liveStatus").textContent =
     "Checking the road route and nearby attractions…";
-  let route = await roadRoute(pts, true),
-    line = route?.geometry || pts;
+  let route = await roadRoute(pts, true);
+  if (!route?.geometry?.length) {
+    $("#liveStatus").textContent =
+      "The driving route could not be verified. Try again or search near your destination.";
+    $("#runRouteSearch").disabled = false;
+    return;
+  }
+  let line = route.geometry;
   // Spread search samples over the entire route rather than truncating its first section.
   let length = 0,
     cumulative = [0];
@@ -1730,7 +1794,17 @@ $("#routeCats").onclick = (e) => {
   if (b) b.classList.toggle("on");
 };
 $("#runRouteSearch").onclick = searchAlongRoute;
+let addingTripStop = false;
 async function addToTrip(p) {
+  if (addingTripStop) return false;
+  addingTripStop = true;
+  try {
+    return await addToTripOnce(p);
+  } finally {
+    addingTripStop = false;
+  }
+}
+async function addToTripOnce(p) {
   if (!state.trip) {
     queuePlanStop(p);
     alert("Added to Selected / custom stops on Plan.");
@@ -1754,9 +1828,27 @@ async function addToTrip(p) {
     alert("Your trip changed. Please add the stop again.");
     return;
   }
+  if (!ranked[0]?.detour) {
+    alert("A drivable connection to this stop could not be found.");
+    return false;
+  }
+  const proposed = {
+    ...state.trip,
+    roadVerified: false,
+    stops: [...state.trip.stops, p],
+  };
+  if (
+    distantTripStops(proposed).some((s) => s === p) &&
+    !ranked[0].detour.routed
+  ) {
+    alert(
+      "This stop is far from your route and its driving connection could not be verified. Check the city and country.",
+    );
+    return false;
+  }
   let d = ranked[0]?.detour,
     index = d?.index ?? state.trip.stops.length,
-    candidate = { ...p, done: false, skipped: false };
+    candidate = AppCore.place({ ...p, done: false, skipped: false });
   state.trip.stops.splice(index, 0, candidate);
   await recalc();
   let excess = state.trip.estimated - state.trip.budget;
@@ -1798,6 +1890,7 @@ $("#addCustomStop").onclick = async () => {
         "Place not found. Try city, state and name.";
       return;
     }
+    if (!confirm("Add this location?\n" + p.name)) return;
     await addToTrip({
       ...p,
       visit: +$("#customStopTime").value,
@@ -1859,13 +1952,16 @@ $("#manualNearby").onclick = () => {
     "_blank",
   );
 };
-function allTourPlaces() {
+function allTourPlaces(includeFinished = false) {
   let m = new Map();
   PLACES.forEach((p) => m.set(p.id, p));
   (state.planStops || []).forEach((p) => m.set(p.id, p));
   (state.trip?.stops || []).forEach((p) => m.set(p.id, p));
   return [...m.values()].filter(
-    (p) => p.lat != null && p.lon != null && !p.skipped && !p.done,
+    (p) =>
+      p.lat != null &&
+      p.lon != null &&
+      (includeFinished || (!p.skipped && !p.done)),
   );
 }
 async function enrichTourPlace(p) {
@@ -2047,7 +2143,7 @@ function gpsWatch() {
 }
 $("#watchBtn").onclick = gpsWatch;
 function renderHistory() {
-  let pool = allTourPlaces(),
+  let pool = allTourPlaces(true),
     names = state.played
       .map((id) => pool.find((p) => p.id === id)?.name)
       .filter(Boolean);
@@ -2062,7 +2158,7 @@ $("#resetStories").onclick = () => {
   $("#gpsStatus").textContent = "Played-story history reset.";
 };
 function speakPlace(id) {
-  let p = allTourPlaces().find((x) => x.id === id);
+  let p = allTourPlaces(true).find((x) => x.id === id);
   if (!p) return;
   speakTourPlace(p, 0);
 }
@@ -2101,17 +2197,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v26");
+    let c = await caches.open("ride-along-v27");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=26",
-      "./core.js?v=26",
-      "./app.js?v=26",
-      "./route-efficiency.js?v=26",
-      "./planner.js?v=26",
-      "./places.js?v=26",
+      "./styles.css?v=27",
+      "./core.js?v=27",
+      "./app.js?v=27",
+      "./route-efficiency.js?v=27",
+      "./planner.js?v=27",
+      "./places.js?v=27",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2126,14 +2222,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=26",
-    "./core.js?v=26",
-    "./app.js?v=26",
-    "./route-efficiency.js?v=26",
-    "./planner.js?v=26",
-    "./places.js?v=26",
+    "./styles.css?v=27",
+    "./core.js?v=27",
+    "./app.js?v=27",
+    "./route-efficiency.js?v=27",
+    "./planner.js?v=27",
+    "./places.js?v=27",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v26") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v27") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2143,7 +2239,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v26");
+  if ("caches" in window) await caches.delete("ride-along-v27");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

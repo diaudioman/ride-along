@@ -772,3 +772,32 @@ header {
     padding: 10px 12px;
   }
 }
+
+/* Keep anchors and small-screen controls clear of sticky navigation. */
+html {
+  scroll-padding-top: 100px;
+}
+input,
+select {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 480px) {
+  header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  header h1 {
+    font-size: 20px;
+  }
+  header button {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .screen {
+    padding: 14px;
+  }
+  .stopActions button {
+    min-height: 44px;
+  }
+}

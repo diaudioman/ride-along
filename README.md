@@ -20,7 +20,7 @@ Serve this folder with any static web server. GPS and service workers generally 
 
 ## Important limitations
 - Drive estimates are planning approximations, not live traffic or a paid routing API.
-- Custom addresses cannot be geocoded offline, so their final-leg estimate uses a conservative placeholder until a routing/geocoding service is added.
+- New custom addresses require online geocoding. Unresolved endpoints block itinerary creation; stored mapped endpoints remain usable.
 - GPS stories run while the page/app remains active; background behavior is browser/OS dependent.
 - SpeechSynthesis voices vary by device and may not work offline.
 - Google Maps is external and has its own connectivity/offline requirements.
@@ -61,3 +61,9 @@ Provider documentation reviewed 2026-10-06:
 - https://github.com/komoot/photon#demo-server
 - https://project-osrm.org/docs/v5.24.0/api/
 - https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers
+
+### October 6 full-flow review (v27)
+
+Confirmed fixes: destination retained before a separate hotel finish; edit-plan endpoint restoration; destination selection required before building; location guards on Discover additions; stable custom-place IDs; duplicate-add protection; invalid-map pin exclusion; no unverified map route lines; saved planning filters; GPS freshness; completed-story replay; stale live-search response rejection. Custom endpoints offer visible match selection, including intentional distant locations.
+
+Automated coverage includes full-page initialization, itinerary creation/editing, offline routing, unknown/overseas places, skipped stops, budgets, road matrices, state corruption, injection escaping, and offline asset versions. Public API browser checks supplement fixtures. Phone GPS accuracy, background audio, OS interruptions, and actual airplane mode require physical-device verification and are not guaranteed by these checks.
