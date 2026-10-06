@@ -114,3 +114,59 @@ test("selected places are omitted from suggestions", async () => {
   assert.equal($("#planSuggestions").children.length, 0);
   assert.match($("#planSuggestionsStatus").textContent, /No matches/);
 });
+
+test("destination-only suggestions exclude far-away and invalid results", async () => {
+  const { env, $ } = harness();
+  env.planEndpoints = () => ({ start: null, finish: env.state.regionCenter });
+  env.discoverRegionCandidates = async () => [
+    { id: "near", name: "Nearby", lat: 0, lon: 11 },
+    { id: "far", name: "Far away", lat: 0, lon: 30 },
+    { id: "invalid", name: "Invalid", lat: 120, lon: 10 },
+  ];
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 1);
+  assert.match($("#planSuggestions").children[0].innerHTML, /Nearby/);
+});
+test("failed road routing never recommends along an unverified straight line", async () => {
+  const { env, $ } = harness();
+  env.roadRoute = async () => null;
+  env.discoverRegionCandidates = async () => [
+    { id: "mid", name: "Straight-line trap", lat: 0, lon: 3 },
+    { id: "near", name: "Destination museum", lat: 0, lon: 11 },
+  ];
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 1);
+  assert.match(
+    $("#planSuggestions").children[0].innerHTML,
+    /Destination museum/,
+  );
+  assert.match(
+    $("#planSuggestionsStatus").textContent,
+    /near the destination only/,
+  );
+});
+test("nearby attractions with excessive driving detours are excluded", async () => {
+  const { env, $ } = harness();
+  env.rankByDriving = async (list) =>
+    list.map((p) => ({ ...p, detour: { min: 45, mi: 35 } }));
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 0);
+  $("#planDetour").value = "60";
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 1);
+});
+test("distance setting and visit time both constrain suggestions", async () => {
+  const { env, $ } = harness();
+  env.distanceToRoute = () => 3;
+  $("#planRadius").value = "2";
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 0);
+  $("#planRadius").value = "5";
+  $("#planningMode").value = "time";
+  $("#duration").value = "45";
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 0);
+  $("#duration").value = "60";
+  await env.loadPlanner(0, false);
+  assert.equal($("#planSuggestions").children.length, 1);
+});

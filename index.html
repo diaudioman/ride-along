@@ -18,7 +18,7 @@
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       crossorigin=""
     />
-    <link rel="stylesheet" href="styles.css?v=23" />
+    <link rel="stylesheet" href="styles.css?v=24" />
     <title>Ride Along</title>
   </head>
   <body>
@@ -117,6 +117,27 @@
           </div>
           <fieldset class="planStopsBox">
             <legend>Places along your trip</legend>
+            <div class="plannerRouteControls">
+              <label
+                >Maximum distance from route or destination<select
+                  id="planRadius"
+                >
+                  <option value="1">1 mile</option>
+                  <option value="2">2 miles</option>
+                  <option value="5" selected>5 miles</option>
+                  <option value="10">10 miles</option>
+                </select></label
+              >
+              <label
+                >Maximum extra driving per stop<select id="planDetour">
+                  <option value="10">10 min</option>
+                  <option value="20" selected>20 min</option>
+                  <option value="30">30 min</option>
+                  <option value="45">45 min</option>
+                  <option value="60">1 hr</option>
+                </select></label
+              >
+            </div>
             <p id="planSuggestionsStatus" class="muted" role="status">
               Choose a destination to see suggested attractions here.
             </p>
@@ -534,10 +555,10 @@
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       crossorigin=""
     ></script>
-    <script src="core.js?v=23"></script>
-    <script src="places.js?v=23"></script>
-    <script src="route-efficiency.js?v=23"></script>
-    <script src="planner.js?v=23"></script>
-    <script src="app.js?v=23"></script>
+    <script src="core.js?v=24"></script>
+    <script src="places.js?v=24"></script>
+    <script src="route-efficiency.js?v=24"></script>
+    <script src="planner.js?v=24"></script>
+    <script src="app.js?v=24"></script>
   </body>
 </html>

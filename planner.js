@@ -230,8 +230,12 @@ async function loadPlanner(seq, force) {
       ? `<b>${formatMinutes(total)} total · ${drive.mi.toFixed(1)} mi</b><span>${formatMinutes(drive.min)} driving + ${formatMinutes(visit)} visiting</span><small>${routed ? "Road estimate; excludes live traffic." : "Approximate; road route not verified."}</small>${budget ? `<small class="${total > budget ? "warning" : "success"}">${formatMinutes(Math.abs(budget - total))} ${total > budget ? "over your time target" : "remaining"}</small>` : ""}`
       : "<b>Set your starting location to calculate the route.</b><span>You can still browse and add attractions below.</span>";
     drawPlannerMap(points, line, [], !!routed);
+    const radius = +$("#planRadius").value || 5,
+      maxDetour = +$("#planDetour").value || 20,
+      hasRoad = !!routed?.geometry?.length && drive.mi > 0.1;
+    // Never treat a straight line as a verified driving corridor.
     let centers = [state.regionCenter];
-    if (line.length > 1)
+    if (hasRoad)
       for (let i = 0; i < 4; i++)
         centers.push(line[Math.round((i * (line.length - 1)) / 4)]);
     centers = centers.filter(
@@ -247,13 +251,17 @@ async function loadPlanner(seq, force) {
       if (result.status !== "fulfilled") continue;
       for (let p of result.value) {
         if (
+          !RouteEfficiency.mapped(p) ||
           seen.has(p.name) ||
           state.planStops.some((s) => s.id === p.id || s.name === p.name) ||
           miles(state.regionCenter, p) < 0.08
         )
           continue;
         seen.add(p.name);
-        if (line.length > 1 && distanceToRoute(p, line) > 5) continue;
+        const away = hasRoad
+          ? distanceToRoute(p, line)
+          : miles(state.regionCenter, p);
+        if (!Number.isFinite(away) || away > radius) continue;
         pool.push(p);
       }
     }
@@ -264,17 +272,26 @@ async function loadPlanner(seq, force) {
           (a, b) => miles(state.regionCenter, a) - miles(state.regionCenter, b),
         );
     if (seq !== plannerSeq) return;
+    ranked = ranked.filter((p) => {
+      if (!trip) return true;
+      if (!p.detour || p.detour.min > maxDetour) return false;
+      return !budget || total + p.detour.min + (+p.visit || 30) <= budget;
+    });
     plannerCandidates = ranked;
     let shown = ranked.slice(0, 12);
     showPlannerSuggestions(shown, trip);
     drawPlannerMap(points, line, shown, !!routed);
     $("#planSuggestionsStatus").textContent = shown.length
-      ? (trip
-          ? "Suggested stops along your trip, lowest added driving first."
-          : "Suggested attractions near your destination.") +
+      ? (hasRoad
+          ? `Stops within ${radius} mi of your road route, lowest added driving first.`
+          : `Attractions within ${radius} mi of your destination (straight-line distance).`) +
+        (trip ? ` Maximum ${maxDetour} min extra driving per stop.` : "") +
+        (!hasRoad && trip
+          ? " Road route unavailable; browsing near the destination only."
+          : "") +
         " Tap Add stop or a blue map pin. Visiting time is separate." +
         (shown.some((p) => p.curated) ? " Includes saved curated places." : "")
-      : "No matches for this area and your filters. Try different trip options, refresh, or search for a specific place below.";
+      : `No matches within ${radius} mi${trip ? ` and ${maxDetour} min extra driving` : ""}${budget ? " that fit your remaining trip time" : ""}. Increase the limits or search for a specific place below.`;
     $("#refreshPlanSuggestions").classList.remove("hidden");
   } catch (e) {
     if (seq !== plannerSeq) return;
@@ -286,7 +303,8 @@ async function loadPlanner(seq, force) {
   }
 }
 // The markup is present before this script; application state is read only on interaction.
-document.querySelector("#refreshPlanSuggestions").onclick = requestPlannerSuggestions;
+document.querySelector("#refreshPlanSuggestions").onclick =
+  requestPlannerSuggestions;
 document.querySelector("#planUseLocation").onclick = () => {
   if (!navigator.geolocation) {
     document.querySelector("#planMapStatus").textContent =
@@ -318,3 +336,7 @@ document.querySelector("#planUseLocation").onclick = () => {
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
   );
 };
+
+for (const id of ["#planRadius", "#planDetour"]) {
+  document.querySelector(id).onchange = () => refreshPlanner();
+}
