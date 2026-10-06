@@ -1286,7 +1286,7 @@ async function geocodeNear(text) {
     ? { lat: a[0].lat, lon: a[0].lon, name: a[0].display || a[0].name }
     : null;
 }
-$("#findRegionThings").onclick = () => refreshPlanner(true);
+$("#findRegionThings").onclick = requestPlannerSuggestions;
 function overpassType(tags = {}) {
   return (
     tags.tourism ||
@@ -2045,17 +2045,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v22");
+    let c = await caches.open("ride-along-v23");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=22",
-      "./core.js?v=22",
-      "./app.js?v=22",
-      "./route-efficiency.js?v=22",
-      "./planner.js?v=22",
-      "./places.js?v=22",
+      "./styles.css?v=23",
+      "./core.js?v=23",
+      "./app.js?v=23",
+      "./route-efficiency.js?v=23",
+      "./planner.js?v=23",
+      "./places.js?v=23",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2070,14 +2070,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=22",
-    "./core.js?v=22",
-    "./app.js?v=22",
-    "./route-efficiency.js?v=22",
-    "./planner.js?v=22",
-    "./places.js?v=22",
+    "./styles.css?v=23",
+    "./core.js?v=23",
+    "./app.js?v=23",
+    "./route-efficiency.js?v=23",
+    "./planner.js?v=23",
+    "./places.js?v=23",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v22") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v23") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2087,7 +2087,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v22");
+  if ("caches" in window) await caches.delete("ride-along-v23");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

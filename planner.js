@@ -44,10 +44,24 @@ function plannerTrip(start, finish) {
     region: state.regionCenter?.name || "",
   };
 }
+function requestPlannerSuggestions() {
+  refreshPlanner(true);
+  const status = $("#planSuggestionsStatus");
+  status.setAttribute("tabindex", "-1");
+  status.focus({ preventScroll: true });
+  status.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function setSuggestionsLoading(loading) {
+  const button = $("#findRegionThings");
+  button.disabled = loading;
+  button.textContent = loading ? "Finding places…" : "Suggest places here";
+  $("#planSuggestions").setAttribute("aria-busy", String(loading));
+}
 function refreshPlanner(force = false) {
   let seq = ++plannerSeq;
   clearTimeout(plannerTimer);
   plannerCandidates = [];
+  setSuggestionsLoading(false);
   if (!state.regionCenter) {
     plannerCandidates = [];
     $("#planMapPanel").classList.add("hidden");
@@ -57,6 +71,7 @@ function refreshPlanner(force = false) {
     $("#planRouteEstimate").textContent = "Choose your destination first.";
     return;
   }
+  setSuggestionsLoading(true);
   $("#planMapPanel").classList.remove("hidden");
   $("#planSuggestionsStatus").textContent =
     "Finding attractions for your trip…";
@@ -266,11 +281,12 @@ async function loadPlanner(seq, force) {
     $("#planSuggestionsStatus").textContent =
       "Suggestions could not load. Refresh to retry or search for a place below.";
     $("#refreshPlanSuggestions").classList.remove("hidden");
+  } finally {
+    if (seq === plannerSeq) setSuggestionsLoading(false);
   }
 }
 // The markup is present before this script; application state is read only on interaction.
-document.querySelector("#refreshPlanSuggestions").onclick = () =>
-  refreshPlanner(true);
+document.querySelector("#refreshPlanSuggestions").onclick = requestPlannerSuggestions;
 document.querySelector("#planUseLocation").onclick = () => {
   if (!navigator.geolocation) {
     document.querySelector("#planMapStatus").textContent =

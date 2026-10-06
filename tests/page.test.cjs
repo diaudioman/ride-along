@@ -22,3 +22,27 @@ test('saved trip rendering escapes injected place names and retains usable actio
  const trip={start:{name:'Start',lat:35,lon:-111},finish:'return',stops:[{id:'x',name:'<img src=x onerror=alert(1)>',lat:35.1,lon:-111,visit:30}],region:'Test'};
  const app=openApp(JSON.stringify({trip}));try{assert.equal(app.$('#tripStops img'),null);assert.match(app.$('#tripStops').textContent,/<img/);app.$('#tripStops [data-a="skip"]').click();assert.match(app.$('#tripStops').textContent,/Skipped/)}finally{app.dom.window.close()}
 });
+
+test('suggest button immediately reveals destination guidance instead of silently updating above viewport',()=>{
+ const app=openApp();try{
+  let revealed=false,focused=false;
+  const status=app.$('#planSuggestionsStatus');
+  status.scrollIntoView=()=>{revealed=true};status.focus=()=>{focused=true};
+  vm.runInContext('state.regionCenter=null',app.context);
+  app.$('#findRegionThings').click();
+  assert.equal(revealed,true);assert.equal(focused,true);
+  assert.match(status.textContent,/Choose a destination/);
+  assert.equal(app.$('#findRegionThings').disabled,false);
+ }finally{app.dom.window.close()}
+});
+test('suggest button shows immediate loading feedback while revealing results',()=>{
+ const app=openApp();try{
+  const status=app.$('#planSuggestionsStatus');status.scrollIntoView=()=>{};
+  vm.runInContext("state.regionCenter={name:'Sedona',lat:34.87,lon:-111.76}",app.context);
+  app.$('#findRegionThings').click();
+  assert.equal(app.$('#findRegionThings').disabled,true);
+  assert.match(app.$('#findRegionThings').textContent,/Finding places/);
+  assert.equal(app.$('#planSuggestions').getAttribute('aria-busy'),'true');
+  vm.runInContext('clearTimeout(plannerTimer)',app.context);
+ }finally{app.dom.window.close()}
+});

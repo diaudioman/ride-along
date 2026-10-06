@@ -10,6 +10,7 @@ function harness() {
       this.value = "";
       this.textContent = "";
     }
+    setAttribute() {}
     replaceChildren(...nodes) {
       this.children = nodes;
     }
