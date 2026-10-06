@@ -435,8 +435,13 @@ $("#planStopName").oninput = () => {
   planSearchTimer = setTimeout(async () => {
     try {
       let region = $("#customRegion").value.trim();
-      let list = await geocodeMany(q + (region ? " " + region : ""), 7);
-      if (!list.length && region) list = await geocodeMany(q, 7);
+      let list = await geocodeMany(
+        q + (region ? " " + region : ""),
+        7,
+        state.regionCenter,
+      );
+      if (!list.length && region)
+        list = await geocodeMany(q, 7, state.regionCenter);
       if ($("#planStopName").value.trim() !== q) return;
       showPlanSuggestions(list);
       $("#planStopMsg").textContent = list.length
@@ -458,11 +463,9 @@ $("#addPlanStop").onclick = async () => {
   let region = $("#customRegion").value.trim(),
     p = selectedPlanSearchPlace;
   if (!p) {
-    try {
-      let list = await geocodeMany(name + (region ? " " + region : ""), 1);
-      if (!list.length && region) list = await geocodeMany(name, 1);
-      p = list[0];
-    } catch (e) {}
+    $("#planStopMsg").textContent =
+      "Choose the correct search result first, then Add stop. Check its city and country.";
+    return;
   }
   if (!p) {
     $("#planStopMsg").textContent =
@@ -584,6 +587,19 @@ async function discoverRegionCandidates(center, region) {
     ),
   ];
 }
+// A distant saved/manual stop must be reviewed, even when time limits are off.
+function distantTripStops(trip) {
+  if (trip.roadVerified) return [];
+  const finish = typeof trip.finish === "object" ? trip.finish : trip.start;
+  const anchors = [trip.start, finish].filter(RouteEfficiency.mapped);
+  if (!anchors.length) return [];
+  return trip.stops.filter(
+    (p) =>
+      !p.skipped &&
+      (!RouteEfficiency.mapped(p) ||
+        RouteEfficiency.distanceToLine(p, anchors, miles) > 100),
+  );
+}
 async function build() {
   if (
     state.trip &&
@@ -624,6 +640,28 @@ async function build() {
   }
   if (!finish) {
     $("#planMsg").textContent = "Enter your hotel or custom destination.";
+    return;
+  }
+  const distant = distantTripStops({ start, finish, stops: state.planStops });
+  const checkedRoute = distant.length
+    ? await roadRoute(
+        [
+          start,
+          ...state.planStops,
+          ...(typeof finish === "object"
+            ? [finish]
+            : finish === "return"
+              ? [start]
+              : []),
+        ],
+        true,
+      )
+    : null;
+  if (distant.length && !checkedRoute) {
+    $("#planMsg").textContent =
+      "Review far-away or unmapped stops before building: " +
+      distant.map((p) => p.name).join(", ") +
+      ". Remove them or select the correct local result.";
     return;
   }
   let curated = plannerCandidates.length
@@ -973,10 +1011,26 @@ function renderTrip() {
   $("#timeOverride").checked = !!t.timeOverride;
   $("#tripSummary").innerHTML =
     `<b>${escapeHTML(t.region)}</b><p>${t.estimated} min estimated total${t.budget ? ` of ${t.budget} min target` : " • time ignored"} • ${t.stops.length} stops</p><p class="meta">~${driveTotal} min driving + ${visitTotal} min at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${t.estimated - t.budget} min over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${t.finalLeg.min} min${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
-  let n = remaining[0];
+  const distant = distantTripStops(t);
+  if (distant.length) {
+    $("#tripSummary").innerHTML =
+      `<b>Check your stop locations</b><p class="warning">These stops are unmapped or more than 100 miles from the start-to-finish corridor: ${distant.map((p) => escapeHTML(p.name)).join(", ")}.</p><p>Driving time is unavailable until these locations are corrected. Choose Edit plan to replace them, or remove them below.</p><button type="button" id="removeDistantStops">Remove far-away stops</button>`;
+    $("#removeDistantStops").onclick = async () => {
+      const ids = new Set(distant.map((p) => p.id));
+      t.stops = t.stops.filter((p) => !ids.has(p.id));
+      state.planStops = state.planStops.filter((p) => !ids.has(p.id));
+      await recalc();
+      save();
+      renderPlanStops();
+      renderTrip();
+    };
+  }
+  let n = distant.length ? null : remaining[0];
   $("#nextStop").innerHTML = n
     ? `<div class="card next"><b>Next stop</b><h3>${escapeHTML(n.name)}</h3><p>~${n.driveMin} min drive • ${n.visit} min visit</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(n, state.location || t.start)}">Navigate in Google Maps</a> <button class="ghost" id="nextStory">Play story</button></div>`
-    : '<div class="card success"><b>All sightseeing stops are complete.</b><p>Continue to your final endpoint when ready.</p></div>';
+    : distant.length
+      ? '<div class="card warning">Correct the stop locations above before navigating.</div>'
+      : '<div class="card success"><b>All sightseeing stops are complete.</b><p>Continue to your final endpoint when ready.</p></div>';
   if (n) $("#nextStory").onclick = () => speakPlace(n.id);
   $("#tripStops").innerHTML = "";
   renderTripMap();
@@ -1231,7 +1285,7 @@ function wireRegionSearch() {
 async function geocodeMany(text, limit = 8, near = null) {
   const q = (text || "").trim();
   if (q.length < 3) return [];
-  const bias = near || state.location || state.regionCenter,
+  const bias = near || state.regionCenter || state.location,
     params = new URLSearchParams({
       q,
       limit: String(Math.min(10, limit)),
@@ -1810,7 +1864,9 @@ function allTourPlaces() {
   PLACES.forEach((p) => m.set(p.id, p));
   (state.planStops || []).forEach((p) => m.set(p.id, p));
   (state.trip?.stops || []).forEach((p) => m.set(p.id, p));
-  return [...m.values()].filter((p) => p.lat != null && p.lon != null && !p.skipped && !p.done);
+  return [...m.values()].filter(
+    (p) => p.lat != null && p.lon != null && !p.skipped && !p.done,
+  );
 }
 async function enrichTourPlace(p) {
   if (p.enriched || p._enrichTried) return p;
@@ -2045,17 +2101,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v24");
+    let c = await caches.open("ride-along-v25");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=24",
-      "./core.js?v=24",
-      "./app.js?v=24",
-      "./route-efficiency.js?v=24",
-      "./planner.js?v=24",
-      "./places.js?v=24",
+      "./styles.css?v=25",
+      "./core.js?v=25",
+      "./app.js?v=25",
+      "./route-efficiency.js?v=25",
+      "./planner.js?v=25",
+      "./places.js?v=25",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2070,14 +2126,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=24",
-    "./core.js?v=24",
-    "./app.js?v=24",
-    "./route-efficiency.js?v=24",
-    "./planner.js?v=24",
-    "./places.js?v=24",
+    "./styles.css?v=25",
+    "./core.js?v=25",
+    "./app.js?v=25",
+    "./route-efficiency.js?v=25",
+    "./planner.js?v=25",
+    "./places.js?v=25",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v24") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v25") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2087,7 +2143,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v24");
+  if ("caches" in window) await caches.delete("ride-along-v25");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";
