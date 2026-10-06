@@ -62,7 +62,7 @@ Provider documentation reviewed 2026-10-06:
 - https://project-osrm.org/docs/v5.24.0/api/
 - https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers
 
-### October 6 full-flow review (v27)
+### October 6 full-flow review (v28)
 
 Confirmed fixes: destination retained before a separate hotel finish; edit-plan endpoint restoration; destination selection required before building; location guards on Discover additions; stable custom-place IDs; duplicate-add protection; invalid-map pin exclusion; no unverified map route lines; saved planning filters; GPS freshness; completed-story replay; stale live-search response rejection. Custom endpoints offer visible match selection, including intentional distant locations.
 

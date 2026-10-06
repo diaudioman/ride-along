@@ -746,29 +746,7 @@ async function build() {
       cur = p;
     }
   }
-  if (
-    !stops.length &&
-    finish !== "return" &&
-    finish !== "last" &&
-    RouteEfficiency.mapped(finish)
-  ) {
-    stops.push({
-      ...finish,
-      id: "destination-" + finish.lat + "," + finish.lon,
-      visit: 0,
-      cats: ["Destination"],
-      desc: "Your selected destination.",
-      source: ["OpenStreetMap", "https://www.openstreetmap.org/"],
-      done: false,
-      skipped: false,
-      driveMin: roadEstimate(cur, finish).min,
-      driveMiles: roadEstimate(cur, finish).mi,
-    });
-    used += stops[0].driveMin;
-    cur = finish;
-    finish = "last";
-  }
-  if (!stops.length) {
+  if (!stops.length && !RouteEfficiency.mapped(finish)) {
     $("#planMsg").textContent = placesFirst
       ? "Places-first mode needs at least one selected stop. Add places above or search for a stop first."
       : "No attractions were returned for that region. Try a more specific city/park name or add selected stops.";
@@ -1057,7 +1035,7 @@ function renderTrip() {
     ? `<div class="card next"><b>Next stop</b><h3>${escapeHTML(n.name)}</h3><p>~${n.driveMin} min drive • ${n.visit} min visit</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(n, state.location || t.start)}">Navigate in Google Maps</a> <button class="ghost" id="nextStory">Play story</button></div>`
     : distant.length
       ? '<div class="card warning">Correct the stop locations above before navigating.</div>'
-      : '<div class="card success"><b>All sightseeing stops are complete.</b><p>Continue to your final endpoint when ready.</p></div>';
+      : `<div class="card success"><b>${t.stops.length ? "All sightseeing stops are complete." : "Your direct route is ready."}</b>${mappedFinish(t) ? `<p>Continue to ${escapeHTML(t.finishLabel)} when ready.</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(mappedFinish(t))}">Navigate to finish</a>` : ""}</div>`;
   if (n) $("#nextStory").onclick = () => speakPlace(n.id);
   $("#tripStops").innerHTML = "";
   renderTripMap();
@@ -2197,17 +2175,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v27");
+    let c = await caches.open("ride-along-v28");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=27",
-      "./core.js?v=27",
-      "./app.js?v=27",
-      "./route-efficiency.js?v=27",
-      "./planner.js?v=27",
-      "./places.js?v=27",
+      "./styles.css?v=28",
+      "./core.js?v=28",
+      "./app.js?v=28",
+      "./route-efficiency.js?v=28",
+      "./planner.js?v=28",
+      "./places.js?v=28",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2222,14 +2200,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=27",
-    "./core.js?v=27",
-    "./app.js?v=27",
-    "./route-efficiency.js?v=27",
-    "./planner.js?v=27",
-    "./places.js?v=27",
+    "./styles.css?v=28",
+    "./core.js?v=28",
+    "./app.js?v=28",
+    "./route-efficiency.js?v=28",
+    "./planner.js?v=28",
+    "./places.js?v=28",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v27") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v28") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2239,7 +2217,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v27");
+  if ("caches" in window) await caches.delete("ride-along-v28");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

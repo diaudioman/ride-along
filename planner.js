@@ -20,6 +20,8 @@ async function resolvePlannerEndpoints() {
     if (!p || typeof p !== "object" || RouteEfficiency.mapped(p)) return p;
     const center = state.regionCenter;
     let key = JSON.stringify([p.name, center?.lat, center?.lon]);
+    if (RouteEfficiency.mapped(state.customEndpoints?.[key]))
+      return state.customEndpoints[key];
     if (!plannerGeoCache.has(key))
       plannerGeoCache.set(
         key,
@@ -417,7 +419,7 @@ for (const kind of ["Start", "Finish"]) {
     clearTimeout(timer);
     results.replaceChildren();
     results.classList.add("hidden");
-    refreshPlanner();
+    previewPlanRoute();
     if (text.length < 3) return;
     timer = setTimeout(async () => {
       try {
@@ -438,6 +440,13 @@ for (const kind of ["Start", "Finish"]) {
               JSON.stringify([input.value, center?.lat, center?.lon]),
               Promise.resolve({ ...point, name: input.value }),
             );
+            state.customEndpoints = {
+              ...state.customEndpoints,
+              [JSON.stringify([input.value, center?.lat, center?.lon])]: {
+                ...point,
+                name: input.value,
+              },
+            };
             results.classList.add("hidden");
             previewPlanRoute();
           };

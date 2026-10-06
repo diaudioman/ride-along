@@ -1,13 +1,13 @@
-const C = "ride-along-v27";
+const C = "ride-along-v28";
 const A = [
   "./",
   "./index.html",
-  "./styles.css?v=27",
-  "./core.js?v=27",
-  "./app.js?v=27",
-  "./route-efficiency.js?v=27",
-  "./planner.js?v=27",
-  "./places.js?v=27",
+  "./styles.css?v=28",
+  "./core.js?v=28",
+  "./app.js?v=28",
+  "./route-efficiency.js?v=28",
+  "./planner.js?v=28",
+  "./places.js?v=28",
   "./manifest.json",
 ];
 self.addEventListener("install", (e) =>

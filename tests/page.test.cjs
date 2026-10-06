@@ -244,3 +244,24 @@ test("completed stops remain available for manual story replay", () => {
     app.dom.window.close();
   }
 });
+
+test("direct trip retains its named finish without turning the hotel into a sightseeing stop", async () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      `state.regionCenter={name:'Crater',lat:35.03,lon:-111.02};
+ document.querySelector('#customRegion').value='Crater'; document.querySelector('#planningMode').value='places';
+ resolvePlannerEndpoints=async()=>({start:state.regionCenter,finish:{name:'Hotel',lat:34.85,lon:-111.83}});
+ discoverRegionCandidates=async()=>[];`,
+      app.context,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(
+      vm.runInContext("state.trip.finish.name", app.context),
+      "Hotel",
+    );
+    assert.equal(vm.runInContext("state.trip.stops.length", app.context), 0);
+  } finally {
+    app.dom.window.close();
+  }
+});
