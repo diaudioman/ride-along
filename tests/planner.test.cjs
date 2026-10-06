@@ -65,6 +65,8 @@ function harness() {
       ...p,
       detour: { index: 0, min: 2, mi: 1, routed: true },
     }));
+  env.distantTripStops = () => [];
+  env.geocodeMany = async (name) => [{ name, lat: 1, lon: 1 }];
   env.geocodeNear = async (name) => ({ name, lat: 1, lon: 1 });
   env.matchesPlanPreferences = () => true;
   env.save = () => {};
@@ -169,4 +171,28 @@ test("distance setting and visit time both constrain suggestions", async () => {
   $("#duration").value = "60";
   await env.loadPlanner(0, false);
   assert.equal($("#planSuggestions").children.length, 1);
+});
+
+test("planner rejects overseas custom finish rather than drawing a world route", async () => {
+  const { env, $ } = harness();
+  env.planEndpoints = () => ({
+    start: { lat: 0, lon: 0 },
+    finish: { name: "Courtyard Sedona", lat: null, lon: null },
+  });
+  env.geocodeMany = async () => [{ name: "Wrong continent", lat: 0, lon: 150 }];
+  await env.loadPlanner(0, false);
+  assert.match($("#planMapStatus").textContent, /Finish location not found/);
+  assert.match($("#planRouteEstimate").textContent, /Route unavailable/);
+});
+test("planner flags saved overseas stops before calculating a total", async () => {
+  const { env, $ } = harness();
+  env.roadRoute = async () => null;
+  env.distantTripStops = () => [{ id: "bad", name: "Overseas stop" }];
+  await env.loadPlanner(0, false);
+  assert.match($("#planMapStatus").textContent, /Overseas stop/);
+  assert.match($("#planRouteEstimate").textContent, /Route unavailable/);
+  assert.equal(
+    $("#planSuggestions").children[0].textContent,
+    "Remove far-away stops",
+  );
 });

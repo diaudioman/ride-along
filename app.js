@@ -2101,17 +2101,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v25");
+    let c = await caches.open("ride-along-v26");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=25",
-      "./core.js?v=25",
-      "./app.js?v=25",
-      "./route-efficiency.js?v=25",
-      "./planner.js?v=25",
-      "./places.js?v=25",
+      "./styles.css?v=26",
+      "./core.js?v=26",
+      "./app.js?v=26",
+      "./route-efficiency.js?v=26",
+      "./planner.js?v=26",
+      "./places.js?v=26",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2126,14 +2126,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=25",
-    "./core.js?v=25",
-    "./app.js?v=25",
-    "./route-efficiency.js?v=25",
-    "./planner.js?v=25",
-    "./places.js?v=25",
+    "./styles.css?v=26",
+    "./core.js?v=26",
+    "./app.js?v=26",
+    "./route-efficiency.js?v=26",
+    "./planner.js?v=26",
+    "./places.js?v=26",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v25") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v26") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2143,7 +2143,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v25");
+  if ("caches" in window) await caches.delete("ride-along-v26");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

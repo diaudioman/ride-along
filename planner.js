@@ -18,12 +18,20 @@ async function resolvePlannerEndpoints() {
   let { start, finish } = planEndpoints();
   async function resolve(p) {
     if (!p || typeof p !== "object" || RouteEfficiency.mapped(p)) return p;
-    let key = p.name;
+    const center = state.regionCenter;
+    let key = JSON.stringify([p.name, center?.lat, center?.lon]);
     if (!plannerGeoCache.has(key))
       plannerGeoCache.set(
         key,
-        geocodeNear(key)
-          .then((p) => {
+        geocodeMany(p.name, 8, center)
+          .then((results) => {
+            // Bias alone is not a boundary: reject worldwide fallback matches.
+            const nearby = results.filter(
+              (p) =>
+                RouteEfficiency.mapped(p) &&
+                (!center || miles(center, p) <= 100),
+            );
+            const p = nearby[0] || null;
             if (!p) plannerGeoCache.delete(key);
             return p;
           })
@@ -199,7 +207,7 @@ async function loadPlanner(seq, force) {
           : finish === "last"
             ? state.regionCenter
             : finish;
-    let trip = hasStart ? plannerTrip(start, finish) : null;
+    let trip = hasStart && finish ? plannerTrip(start, finish) : null;
     let points = trip ? RouteEfficiency.context(trip)?.points : null;
     if (!points) {
       points = [state.regionCenter];
@@ -208,7 +216,31 @@ async function loadPlanner(seq, force) {
     // A region-only exploration has no drive until a stop is selected.
     let routed = points.length > 1 ? await roadRoute(points, true) : null;
     if (seq !== plannerSeq) return;
-    let line = routed?.geometry || points;
+    const invalid = trip && !routed ? distantTripStops(trip) : [];
+    if (invalid.length || (hasStart && !finish)) {
+      const names = invalid.map((p) => p.name).join(", ");
+      $("#planMapStatus").textContent = invalid.length
+        ? "Correct these saved stops: " + names
+        : "Finish location not found near your destination. Enter its city and state.";
+      $("#planRouteEstimate").textContent =
+        "Route unavailable until the locations are corrected.";
+      $("#planSuggestionsStatus").textContent =
+        "Review your start, finish and selected stops below.";
+      drawPlannerMap([state.regionCenter], [], [], false);
+      if (invalid.length) {
+        const button = document.createElement("button");
+        button.textContent = "Remove far-away stops";
+        button.onclick = () => {
+          const ids = new Set(invalid.map((p) => p.id));
+          state.planStops = state.planStops.filter((p) => !ids.has(p.id));
+          save();
+          renderPlanStops();
+        };
+        $("#planSuggestions").replaceChildren(button);
+      }
+      return;
+    }
+    let line = routed?.geometry || [];
     let drive =
       routed ||
       points.slice(1).reduce(
@@ -224,7 +256,7 @@ async function loadPlanner(seq, force) {
     $("#planMapStatus").textContent = trip
       ? routed
         ? "Driving route shown. Blue pins are suggested attractions."
-        : "Dashed line shows stop order; road routing is unavailable or no driving leg is selected."
+        : "Road route unavailable or no driving leg is selected. Pins show locations only."
       : "Showing attractions near your destination. Set a starting location above to see the driving route.";
     $("#planRouteEstimate").innerHTML = trip
       ? `<b>${formatMinutes(total)} total · ${drive.mi.toFixed(1)} mi</b><span>${formatMinutes(drive.min)} driving + ${formatMinutes(visit)} visiting</span><small>${routed ? "Road estimate; excludes live traffic." : "Approximate; road route not verified."}</small>${budget ? `<small class="${total > budget ? "warning" : "success"}">${formatMinutes(Math.abs(budget - total))} ${total > budget ? "over your time target" : "remaining"}</small>` : ""}`
