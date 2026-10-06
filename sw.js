@@ -1,20 +1,20 @@
-const C = "ride-along-v21";
+const C = "ride-along-v22";
 const A = [
   "./",
   "./index.html",
-  "./styles.css",
-  "./core.js",
-  "./app.js",
-  "./route-efficiency.js",
-  "./planner.js",
-  "./places.js",
+  "./styles.css?v=22",
+  "./core.js?v=22",
+  "./app.js?v=22",
+  "./route-efficiency.js?v=22",
+  "./planner.js?v=22",
+  "./places.js?v=22",
   "./manifest.json",
 ];
 self.addEventListener("install", (e) =>
   e.waitUntil(
     caches
       .open(C)
-      .then((c) => c.addAll(A))
+      .then((c) => c.addAll(A.map((url) => new Request(url, { cache: "reload" }))))
       .then(() => self.skipWaiting()),
   ),
 );
