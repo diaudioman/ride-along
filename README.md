@@ -28,3 +28,36 @@ Serve this folder with any static web server. GPS and service workers generally 
 
 ## Privacy
 Core state is stored locally in the browser. No API keys are included.
+## Maintenance and validation
+
+Run `npm ci --ignore-scripts`, `npm test` and `node --check app.js` before publishing. The read-only GitHub Actions workflow runs the same checks on pushes and pull requests.
+The regression suite covers route insertion, skipped stops, road-based totals,
+corrupt/blocked storage, safe text/links, planner suggestions, missing GPS,
+and stale asynchronous responses.
+
+### Architecture
+
+This is a GitHub Pages static app, not an app with a private server or database.
+`core.js` validates saved input, escapes display values, and bounds/caches public
+service requests. `planner.js` owns draft routes and suggestion updates.
+`route-efficiency.js` contains pure route insertion and corridor calculations.
+`app.js` handles itinerary, search, narration and UI events.
+
+Public dependencies: Photon for geocoding, Overpass/OpenStreetMap for attractions,
+OSRM for driving, Leaflet for maps, and Wikipedia for coordinate-matched story
+summaries. No credentials are shipped. Public services do not provide this app
+with guaranteed capacity or availability; larger multi-user production use needs
+provisioned providers or an authenticated server proxy with central rate limiting.
+The browser queues requests per provider, applies timeouts, and caches successful
+responses. Named search text and requested route coordinates go to these providers.
+
+Trips and settings remain device-local. Storage failures produce an on-screen
+notice. Invalid JSON is backed up to `rideAlongStateV3.recovery` where storage is
+available. Do not clear browser data to update the app; use the refresh notice.
+The service worker caches the app shell, not maps or live public API responses.
+GPS and speech require real-device testing; background execution is not promised.
+
+Provider documentation reviewed 2026-10-06:
+- https://github.com/komoot/photon#demo-server
+- https://project-osrm.org/docs/v5.24.0/api/
+- https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers

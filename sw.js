@@ -1,1 +1,68 @@
-const C='ride-along-v20',A=['./','./index.html','./styles.css','./app.js','./route-efficiency.js','./planner.js','./places.js','./manifest.json'];self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(A)).then(()=>self.skipWaiting())));self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('ride-along-')&&k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(resp=>{if(new URL(e.request.url).origin===location.origin){let c=resp.clone();caches.open(C).then(x=>x.put(e.request,c))}return resp}).catch(()=>caches.match('./index.html'))))});
+const C = "ride-along-v21";
+const A = [
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./core.js",
+  "./app.js",
+  "./route-efficiency.js",
+  "./planner.js",
+  "./places.js",
+  "./manifest.json",
+];
+self.addEventListener("install", (e) =>
+  e.waitUntil(
+    caches
+      .open(C)
+      .then((c) => c.addAll(A))
+      .then(() => self.skipWaiting()),
+  ),
+);
+self.addEventListener("activate", (e) =>
+  e.waitUntil(
+    caches
+      .keys()
+      .then((ks) =>
+        Promise.all(
+          ks
+            .filter((k) => k.startsWith("ride-along-") && k !== C)
+            .map((k) => caches.delete(k)),
+        ),
+      )
+      .then(() => self.clients.claim()),
+  ),
+);
+self.addEventListener("fetch", (e) => {
+  const u = new URL(e.request.url);
+  if (e.request.method !== "GET" || u.origin !== location.origin) return;
+  e.respondWith(
+    (async () => {
+      const c = await caches.open(C);
+      // Only HTML navigations may fall back to the app shell. Never serve HTML as JSON or JS.
+      if (e.request.mode === "navigate") {
+        try {
+          const r = await fetch(e.request);
+          if (r.ok) {
+            await c.put(e.request, r.clone());
+            return r;
+          }
+          const saved = await c.match(e.request);
+          return saved || r;
+        } catch {
+          const saved =
+            (await c.match(e.request)) || (await c.match("./index.html"));
+          return saved || Response.error();
+        }
+      }
+      const saved = await c.match(e.request);
+      if (saved) return saved;
+      try {
+        const r = await fetch(e.request);
+        if (r.ok) await c.put(e.request, r.clone());
+        return r;
+      } catch {
+        return Response.error();
+      }
+    })(),
+  );
+});

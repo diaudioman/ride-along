@@ -1,0 +1,13 @@
+{
+  "name": "ride-along",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.cjs",
+    "format": "prettier --write app.js core.js planner.js route-efficiency.js sw.js index.html styles.css tests/*.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "prettier": "3.6.2"
+  }
+}
