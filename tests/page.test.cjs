@@ -291,3 +291,35 @@ test("Create itinerary automatically reorders stops and preserves the finish", a
     app.dom.window.close();
   }
 });
+
+test("visited controls persist, suppress recommendations, and support undo", () => {
+  const app = openApp();
+  try {
+    const button = app.$("#places .visitedButton");
+    assert.ok(button);
+    button.click();
+    assert.equal(vm.runInContext("state.visited.length", app.context), 1);
+    assert.equal(
+      vm.runInContext("matchesPlanPreferences(state.visited[0])", app.context),
+      false,
+    );
+    const saved = app.w.localStorage.getItem("rideAlongStateV3");
+    assert.equal(JSON.parse(saved).visited.length, 1);
+    const reopened = openApp(saved);
+    try {
+      assert.equal(
+        reopened.$("#visitedPlaces .visitedButton").textContent,
+        "Visited ✓ · Undo",
+      );
+      reopened.$("#visitedPlaces .visitedButton").click();
+      assert.equal(
+        vm.runInContext("state.visited.length", reopened.context),
+        0,
+      );
+    } finally {
+      reopened.dom.window.close();
+    }
+  } finally {
+    app.dom.window.close();
+  }
+});

@@ -203,6 +203,7 @@ function showPlannerSuggestions(list, trip) {
         : "";
     card.innerHTML = `<div><h4>${i + 1}. ${plannerEscape(p.name)}</h4><p>${plannerEscape(p.type || p.cats?.[0] || "Attraction")} · ${p.visit || 30} min visit</p></div><button type="button" class="ghost">Add stop</button><div class="tags">${d ? `<span class="tag">${driving}</span><span class="tag">${d.routed ? "Road estimate" : "Approximate driving estimate"}</span>` : `<span class="tag">${miles(state.regionCenter, p).toFixed(1)} mi from destination · straight line</span>`}</div>`;
     card.querySelector("button").onclick = () => addPlannerSuggestion(p);
+    card.append(visitedButton(p));
     box.append(card);
   });
 }

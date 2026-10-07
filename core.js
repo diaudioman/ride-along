@@ -95,6 +95,9 @@
       planStops: Array.isArray(s.planStops)
         ? s.planStops.map(place).filter(Boolean)
         : [],
+      visited: Array.isArray(s.visited)
+        ? s.visited.map(place).filter(Boolean)
+        : [],
       favs: Array.isArray(s.favs)
         ? s.favs.filter((x) => typeof x === "string")
         : [],
@@ -215,6 +218,7 @@ function categoriesForTags(t) {
   return cats;
 }
 function matchesPlanPreferences(p) {
+  if (isVisited(p)) return false;
   const value = (id) => document.querySelector(id)?.value;
   if (value("#walking") === "easy" && p.walk !== "easy") return false;
   if (

@@ -18,7 +18,7 @@
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       crossorigin=""
     />
-    <link rel="stylesheet" href="styles.css?v=29" />
+    <link rel="stylesheet" href="styles.css?v=30" />
     <title>Ride Along</title>
   </head>
   <body>
@@ -291,6 +291,14 @@
           <button id="favoritesOnly" class="ghost">Favorites</button>
         </div>
         <div class="card liveSearch">
+          <details class="card">
+            <summary>Visited places</summary>
+            <p>
+              Visited places are excluded from automatic suggestions. Undo a
+              visit to suggest them again.
+            </p>
+            <div id="visitedPlaces"></div>
+          </details>
           <h3>Find things to do</h3>
           <p class="muted">
             Worldwide search for named attractions, cities, parks, landmarks and
@@ -561,10 +569,10 @@
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       crossorigin=""
     ></script>
-    <script src="core.js?v=29"></script>
-    <script src="places.js?v=29"></script>
-    <script src="route-efficiency.js?v=29"></script>
-    <script src="planner.js?v=29"></script>
-    <script src="app.js?v=29"></script>
+    <script src="core.js?v=30"></script>
+    <script src="places.js?v=30"></script>
+    <script src="route-efficiency.js?v=30"></script>
+    <script src="planner.js?v=30"></script>
+    <script src="app.js?v=30"></script>
   </body>
 </html>

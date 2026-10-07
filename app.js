@@ -1116,7 +1116,7 @@ function renderTrip() {
   t.stops.forEach((p, i) => {
     let d = document.createElement("div");
     d.className = "stop" + (p.done ? " done" : "");
-    d.innerHTML = `<div class="stopHead"><h3>${i + 1}. ${escapeHTML(p.name)}</h3><span>${p.visit} min</span></div><p>${escapeHTML(p.desc)}</p><p class="meta">${p.skipped ? "Skipped — not included in route" : "Drive from previous:"} ~${p.driveMin} min${p.driveMiles != null ? " / ~" + p.driveMiles + " mi" : ""} • ${escapeHTML(p.fee)}</p><div class="stopActions"><button data-a="done">${p.done ? "Undo" : "Complete"}</button><button data-a="skip">${p.skipped ? "Unskip" : "Skip"}</button><button data-a="up">↑</button><button data-a="down">↓</button><button data-a="minus">− 5 min</button><button data-a="plus">+ 5 min</button><button data-a="story">Story</button><button data-a="remove">Remove</button><a target="_blank" rel="noopener noreferrer" href="${mapsUrl(p)}">Navigate</a></div>`;
+    d.innerHTML = `<div class="stopHead"><h3>${i + 1}. ${escapeHTML(p.name)}</h3><span>${p.visit} min</span></div><p>${escapeHTML(p.desc)}</p><p class="meta">${p.skipped ? "Skipped — not included in route" : "Drive from previous:"} ~${p.driveMin} min${p.driveMiles != null ? " / ~" + p.driveMiles + " mi" : ""} • ${escapeHTML(p.fee)}</p><div class="stopActions"><button data-a="done">${p.done ? "Visited ✓ · Undo" : "Mark visited"}</button><button data-a="skip">${p.skipped ? "Unskip" : "Skip"}</button><button data-a="up">↑</button><button data-a="down">↓</button><button data-a="minus">− 5 min</button><button data-a="plus">+ 5 min</button><button data-a="story">Story</button><button data-a="remove">Remove</button><a target="_blank" rel="noopener noreferrer" href="${mapsUrl(p)}">Navigate</a></div>`;
     d.querySelectorAll("button").forEach(
       (b) => (b.onclick = () => edit(i, b.dataset.a)),
     );
@@ -1126,7 +1126,7 @@ function renderTrip() {
 function edit(i, a) {
   let s = state.trip.stops,
     p = s[i];
-  if (a === "done") p.done = !p.done;
+  if (a === "done") setVisited(p, !p.done);
   if (a === "skip") p.skipped = !p.skipped;
   if (a === "up" && i) [s[i - 1], s[i]] = [s[i], s[i - 1]];
   if (a === "down" && i < s.length - 1) [s[i + 1], s[i]] = [s[i], s[i + 1]];
@@ -1218,6 +1218,64 @@ function updateExisting() {
   } else $("#existingTrip").classList.add("hidden");
 }
 let favOnly = false;
+function sameVisitedPlace(a, b) {
+  return (
+    (a.id && a.id === b.id) ||
+    (RouteEfficiency.mapped(a) &&
+      RouteEfficiency.mapped(b) &&
+      miles(a, b) < 0.08 &&
+      a.name.trim().toLowerCase() === b.name.trim().toLowerCase())
+  );
+}
+function isVisited(p) {
+  return (state.visited || []).some((v) => sameVisitedPlace(v, p));
+}
+function setVisited(p, visited = true) {
+  state.visited = (state.visited || []).filter((v) => !sameVisitedPlace(v, p));
+  if (visited)
+    state.visited.push(AppCore.place({ ...p, visitedAt: Date.now() }));
+  for (const stop of state.trip?.stops || [])
+    if (sameVisitedPlace(stop, p)) stop.done = visited;
+  save();
+  renderDiscover();
+  renderTrip();
+  if (state.location)
+    renderPlaces(
+      "#nearbyPlaces",
+      nearest(state.location.lat, state.location.lon).slice(0, 12),
+    );
+  renderLiveResults(liveSearchResults);
+  refreshPlanner();
+}
+function visitedButton(p) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "ghost visitedButton";
+  b.textContent = isVisited(p) ? "Visited ✓ · Undo" : "Mark visited";
+  b.setAttribute(
+    "aria-label",
+    (isVisited(p) ? "Undo visited: " : "Mark visited: ") + p.name,
+  );
+  b.onclick = () => setVisited(p, !isVisited(p));
+  return b;
+}
+function renderVisited() {
+  const box = $("#visitedPlaces");
+  if (!box) return;
+  box.replaceChildren();
+  if (!state.visited.length) {
+    box.textContent = "No places marked visited yet.";
+    return;
+  }
+  for (const p of [...state.visited].reverse()) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const title = document.createElement("span");
+    title.textContent = p.name;
+    row.append(title, visitedButton(p));
+    box.append(row);
+  }
+}
 function placeCard(p) {
   let d = document.createElement("div");
   d.className = "place";
@@ -1231,6 +1289,7 @@ function placeCard(p) {
   };
   d.querySelector(".story").onclick = () => speakPlace(p.id);
   d.querySelector(".add").onclick = () => addToTrip(p);
+  d.append(visitedButton(p));
   return d;
 }
 function renderPlaces(target, list) {
@@ -1241,6 +1300,7 @@ function renderPlaces(target, list) {
   list.forEach((p) => $(target).append(placeCard(p)));
 }
 function renderDiscover() {
+  renderVisited();
   let q = $("#search").value.toLowerCase(),
     r = $("#discoverRegion").value;
   let list = PLACES.filter(
@@ -1273,6 +1333,7 @@ function livePlaceCard(p) {
     routeMeta = detourTags(p);
   d.innerHTML = `<div class="placeHead"><h3>${escapeHTML(p.name)}</h3><span class="tag">Live search</span></div><div class="tags">${p.type ? `<span class="tag">${escapeHTML(p.type)}</span>` : ""}${dist != null ? `<span class="tag">~${dist.toFixed(1)} mi away</span>` : ""}${routeMeta}</div><p>${escapeHTML(p.desc || "Place or point of interest from OpenStreetMap.")}</p><p class="meta">${escapeHTML(p.address || "")}</p><div class="row"><button class="ghost addLive">Add to trip</button><a target="_blank" rel="noopener noreferrer" href="${mapsUrl(p)}">Open in Maps</a></div>`;
   d.querySelector(".addLive").onclick = () => addToTrip(p);
+  d.append(visitedButton(p));
   return d;
 }
 let liveRenderSeq = 0;
@@ -1804,7 +1865,8 @@ async function searchAlongRoute() {
       return;
     }
     liveSearchResults = ranked.filter(
-      (p) => p.detour && (!maxDetour || p.detour.min <= maxDetour),
+      (p) =>
+        !isVisited(p) && p.detour && (!maxDetour || p.detour.min <= maxDetour),
     );
     renderLiveResults(liveSearchResults);
     let approximate = liveSearchResults.some((p) => !p.detour.routed);
@@ -2005,7 +2067,7 @@ function allTourPlaces(includeFinished = false) {
     (p) =>
       p.lat != null &&
       p.lon != null &&
-      (includeFinished || (!p.skipped && !p.done)),
+      (includeFinished || (!p.skipped && !p.done && !isVisited(p))),
   );
 }
 async function enrichTourPlace(p) {
@@ -2241,17 +2303,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v29");
+    let c = await caches.open("ride-along-v30");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=29",
-      "./core.js?v=29",
-      "./app.js?v=29",
-      "./route-efficiency.js?v=29",
-      "./planner.js?v=29",
-      "./places.js?v=29",
+      "./styles.css?v=30",
+      "./core.js?v=30",
+      "./app.js?v=30",
+      "./route-efficiency.js?v=30",
+      "./planner.js?v=30",
+      "./places.js?v=30",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2266,14 +2328,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=29",
-    "./core.js?v=29",
-    "./app.js?v=29",
-    "./route-efficiency.js?v=29",
-    "./planner.js?v=29",
-    "./places.js?v=29",
+    "./styles.css?v=30",
+    "./core.js?v=30",
+    "./app.js?v=30",
+    "./route-efficiency.js?v=30",
+    "./planner.js?v=30",
+    "./places.js?v=30",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v29") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v30") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2283,7 +2345,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v29");
+  if ("caches" in window) await caches.delete("ride-along-v30");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

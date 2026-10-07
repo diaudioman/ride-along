@@ -69,6 +69,7 @@ function harness() {
   env.distantTripStops = () => [];
   env.geocodeMany = async (name) => [{ name, lat: 1, lon: 1 }];
   env.geocodeNear = async (name) => ({ name, lat: 1, lon: 1 });
+  env.visitedButton = () => new Element();
   env.matchesPlanPreferences = () => true;
   env.save = () => {};
   env.renderPlanStops = () => {};
