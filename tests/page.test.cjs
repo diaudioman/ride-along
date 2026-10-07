@@ -787,3 +787,48 @@ test("creating a time plan before preview completion still discovers attractions
     app.dom.window.close();
   }
 });
+
+test("visited and rejected places match named search results with address suffixes", () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      `state.visited=[AppCore.place({id:'search',name:'Oak Creek Vista, Coconino County, Arizona, United States',lat:35.0291,lon:-111.7379})];`,
+      app.context,
+    );
+    assert.equal(
+      vm.runInContext(
+        "isVisited({id:'osm',name:'Oak Creek Vista',lat:35.0291,lon:-111.7379})",
+        app.context,
+      ),
+      true,
+    );
+    assert.equal(
+      vm.runInContext(
+        "isVisited({id:'other',name:'Different attraction',lat:35.0291,lon:-111.7379})",
+        app.context,
+      ),
+      false,
+    );
+    assert.equal(
+      vm.runInContext(
+        "isVisited({id:'other',name:'Oak Creek Vista',lat:40,lon:-111})",
+        app.context,
+      ),
+      false,
+    );
+    vm.runInContext(
+      "state.dismissed=[...state.visited];setVisited({id:'osm',name:'Oak Creek Vista',lat:35.0291,lon:-111.7379},false);",
+      app.context,
+    );
+    assert.equal(vm.runInContext("state.visited.length", app.context), 0);
+    assert.equal(
+      vm.runInContext(
+        "isDismissed({id:'osm',name:'Oak Creek Vista',lat:35.0291,lon:-111.7379})",
+        app.context,
+      ),
+      true,
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});

@@ -1469,12 +1469,18 @@ $("#saveNamedTrip").onclick = () => {
 };
 let favOnly = false;
 function sameVisitedPlace(a, b) {
+  const first = a.name.trim().toLowerCase(),
+    second = b.name.trim().toLowerCase();
+  const sameName =
+    first === second ||
+    first.startsWith(second + ", ") ||
+    second.startsWith(first + ", ");
   return (
     (a.id && a.id === b.id) ||
     (RouteEfficiency.mapped(a) &&
       RouteEfficiency.mapped(b) &&
       miles(a, b) < 0.08 &&
-      a.name.trim().toLowerCase() === b.name.trim().toLowerCase())
+      sameName)
   );
 }
 function isVisited(p) {
@@ -2630,17 +2636,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v33");
+    let c = await caches.open("ride-along-v34");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=33",
-      "./core.js?v=33",
-      "./app.js?v=33",
-      "./route-efficiency.js?v=33",
-      "./planner.js?v=33",
-      "./places.js?v=33",
+      "./styles.css?v=34",
+      "./core.js?v=34",
+      "./app.js?v=34",
+      "./route-efficiency.js?v=34",
+      "./planner.js?v=34",
+      "./places.js?v=34",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2655,14 +2661,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=33",
-    "./core.js?v=33",
-    "./app.js?v=33",
-    "./route-efficiency.js?v=33",
-    "./planner.js?v=33",
-    "./places.js?v=33",
+    "./styles.css?v=34",
+    "./core.js?v=34",
+    "./app.js?v=34",
+    "./route-efficiency.js?v=34",
+    "./planner.js?v=34",
+    "./places.js?v=34",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v33") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v34") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2672,7 +2678,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v33");
+  if ("caches" in window) await caches.delete("ride-along-v34");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";
