@@ -759,3 +759,31 @@ test("editing a search hides old destination and stop choices immediately", () =
     app.dom.window.close();
   }
 });
+
+test("creating a time plan before preview completion still discovers attractions along the road route", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      plannerCandidates=[];
+      window.queriedCenters=[];
+      discoverRegionCandidates=async center=>{
+        window.queriedCenters.push(center.lon);
+        return center.lon===-111.1 ? [{id:'road-view',name:'View near the start',lat:35,lon:-111.09,visit:15,cats:['Scenic views']}] : [];
+      };
+    `,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(
+      vm.runInContext("state.trip.stops[0].id", app.context),
+      "road-view",
+    );
+    assert.ok(app.w.queriedCenters.includes(-111.1));
+    assert.ok(
+      vm.runInContext("state.trip.estimated<=state.trip.budget", app.context),
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});

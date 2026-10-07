@@ -792,6 +792,28 @@ async function evaluateTrip(t, drivingLeg = roadEstimate) {
   if (road) applyTripRoad(t, road, points.length);
   return t;
 }
+async function buildCandidates(t, destination) {
+  if (plannerCandidates.length) return [...plannerCandidates];
+  // Creating a trip must not depend on whether the asynchronous preview has finished.
+  const centers = [destination];
+  if (t.roadVerified && t.roadGeometry?.length > 1)
+    for (let i = 0; i < 4; i++)
+      centers.push(
+        t.roadGeometry[Math.round((i * (t.roadGeometry.length - 1)) / 4)],
+      );
+  const unique = centers.filter(
+    (p, i, all) => all.findIndex((x) => miles(x, p) < 2) === i,
+  );
+  const results = await Promise.allSettled(
+    unique.map((center) => plannerPlaces(center, false)),
+  );
+  const places = [];
+  for (const result of results)
+    if (result.status === "fulfilled")
+      for (const place of result.value)
+        if (!places.some((p) => sameVisitedPlace(p, place))) places.push(place);
+  return places;
+}
 async function build() {
   if (
     state.trip &&
@@ -887,9 +909,7 @@ async function build() {
   let unverifiedSuggestions = false;
   if (!placesFirst && draft.estimated < budget) {
     $("#planMsg").textContent = "Fitting nearby attractions into your route…";
-    const available = plannerCandidates.length
-      ? [...plannerCandidates]
-      : await discoverRegionCandidates(destination, region);
+    const available = await buildCandidates(draft, destination);
     if (!unchanged()) return;
     const candidates = available
       .filter(
@@ -902,6 +922,12 @@ async function build() {
           (draft.roadVerified && draft.roadGeometry?.length > 1
             ? distanceToRoute(p, draft.roadGeometry)
             : miles(destination, p)) <= radius,
+      )
+      .sort(
+        (a, b) =>
+          (estimatedDetour(a, draft)?.min ?? Infinity) -
+          suggestionBonus(a) -
+          ((estimatedDetour(b, draft)?.min ?? Infinity) - suggestionBonus(b)),
       )
       .slice(0, 30)
       .map((p) => AppCore.place(p));
@@ -1210,7 +1236,7 @@ function renderTrip() {
   $("#tripBudget").value = String(t.budget || 0);
   $("#timeOverride").checked = !!t.timeOverride;
   $("#tripSummary").innerHTML =
-    `<b>${escapeHTML(t.region)}</b><p>${formatMinutes(t.estimated)} estimated total${t.budget ? ` of ${formatMinutes(t.budget)} target` : " • no time limit"} • ${t.stops.filter((p) => !p.skipped).length} stops</p><p class="meta">${t.stops.filter((p) => p.done && !p.skipped).length} visited · ${remaining.length} remaining${t.stops.some((p) => p.skipped) ? ` · ${t.stops.filter((p) => p.skipped).length} skipped` : ""}</p><p class="meta">~${formatMinutes(driveTotal)} driving + ${formatMinutes(visitTotal)} at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${formatMinutes(t.estimated - t.budget)} over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${formatMinutes(t.finalLeg.min)}${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
+    `<b>${escapeHTML(t.region)}</b><p>${formatMinutes(t.estimated)} estimated total${t.budget ? ` of ${formatMinutes(t.budget)} target` : " • no time limit"} • ${t.stops.filter((p) => !p.skipped).length} stop${t.stops.filter((p) => !p.skipped).length === 1 ? "" : "s"}</p><p class="meta">${t.stops.filter((p) => p.done && !p.skipped).length} visited · ${remaining.length} remaining${t.stops.some((p) => p.skipped) ? ` · ${t.stops.filter((p) => p.skipped).length} skipped` : ""}</p><p class="meta">~${formatMinutes(driveTotal)} driving + ${formatMinutes(visitTotal)} at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${formatMinutes(t.estimated - t.budget)} over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${formatMinutes(t.finalLeg.min)}${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
   const distant = distantTripStops(t);
   if (distant.length) {
     $("#tripSummary").innerHTML =
@@ -2604,17 +2630,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v32");
+    let c = await caches.open("ride-along-v33");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=32",
-      "./core.js?v=32",
-      "./app.js?v=32",
-      "./route-efficiency.js?v=32",
-      "./planner.js?v=32",
-      "./places.js?v=32",
+      "./styles.css?v=33",
+      "./core.js?v=33",
+      "./app.js?v=33",
+      "./route-efficiency.js?v=33",
+      "./planner.js?v=33",
+      "./places.js?v=33",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2629,14 +2655,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=32",
-    "./core.js?v=32",
-    "./app.js?v=32",
-    "./route-efficiency.js?v=32",
-    "./planner.js?v=32",
-    "./places.js?v=32",
+    "./styles.css?v=33",
+    "./core.js?v=33",
+    "./app.js?v=33",
+    "./route-efficiency.js?v=33",
+    "./planner.js?v=33",
+    "./places.js?v=33",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v32") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v33") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2646,7 +2672,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v32");
+  if ("caches" in window) await caches.delete("ride-along-v33");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

@@ -68,8 +68,9 @@ Confirmed fixes: destination retained before a separate hotel finish; edit-plan 
 
 Automated coverage includes full-page initialization, itinerary creation/editing, offline routing, unknown/overseas places, skipped stops, budgets, road matrices, state corruption, injection escaping, and offline asset versions. Public API browser checks supplement fixtures. Phone GPS accuracy, background audio, OS interruptions, and actual airplane mode require physical-device verification and are not guaranteed by these checks.
 
-### October 7 review (v32)
+### October 7 review (v33)
 
+- Creating a trip discovers along-route attractions even while the preview is still loading.
 - Time planning inserts optional attractions into the route, preserves a fixed last-stop destination and a separate finish, and favors scenic stops only within the driving and time limits.
 - Final road totals are checked before saving. If necessary, only automatic additions are removed; selected stops require an explicit override to exceed the time target. Automatic additions require verified road detours.
 - Build and add-stop requests use isolated drafts. Changing a plan while routing or declining an over-budget addition cannot leave a partially saved itinerary.
