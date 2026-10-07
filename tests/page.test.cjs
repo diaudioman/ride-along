@@ -734,3 +734,28 @@ test("changing only visit duration preserves verified road geometry and adjusts 
     app.dom.window.close();
   }
 });
+
+test("editing a search hides old destination and stop choices immediately", () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      "showRegionSuggestions([{name:'Old result',display:'Old result, old city',lat:35,lon:-111}]);showPlanSuggestions([{name:'Old stop',display:'Old stop, old city',lat:35,lon:-111}]);",
+      app.context,
+    );
+    app.$("#customRegion").value = "New destination";
+    app.$("#customRegion").dispatchEvent(new app.w.Event("input"));
+    assert.equal(
+      app.$("#regionSuggestions").classList.contains("hidden"),
+      true,
+    );
+    assert.equal(app.$("#regionSuggestions").children.length, 0);
+    app.$("#planStopName").value = "New stop";
+    app.$("#planStopName").dispatchEvent(new app.w.Event("input"));
+    assert.equal(
+      app.$("#planStopSuggestions").classList.contains("hidden"),
+      true,
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});

@@ -167,3 +167,61 @@ test("unreachable permutations preserve all selected stops without silently drop
     stops,
   );
 });
+
+test("one off-road attraction does not discard valid road detours for other places", async () => {
+  const sandbox = appHarness(async () => ({
+    ok: true,
+    json: async () => ({
+      code: "Ok",
+      sources: [
+        { distance: 0 },
+        { distance: 0 },
+        { distance: 0 },
+        { distance: 900 },
+      ],
+      destinations: [
+        { distance: 0 },
+        { distance: 0 },
+        { distance: 0 },
+        { distance: 900 },
+      ],
+      distances: [
+        [0, 1000, 600, 6000],
+        [1000, 0, 600, 6000],
+        [600, 600, 0, 6000],
+        [6000, 6000, 6000, 0],
+      ],
+      durations: [
+        [0, 100, 60, 600],
+        [100, 0, 60, 600],
+        [60, 60, 0, 600],
+        [600, 600, 600, 0],
+      ],
+    }),
+  }));
+  const trip = { start: p(0), stops: [], finish: p(10) };
+  const good = { ...p(5), id: "road-access" },
+    bad = { ...p(6), id: "off-road" };
+  const ranked = await sandbox.rankByDriving([good, bad], trip);
+  assert.equal(ranked.length, 1);
+  assert.equal(ranked[0].id, "road-access");
+  assert.equal(ranked[0].detour.routed, true);
+  const source = fs.readFileSync("app.js", "utf8");
+  vm.runInContext(
+    source.slice(
+      source.indexOf("async function drivingCosts("),
+      source.indexOf("function orderStops("),
+    ),
+    sandbox,
+  );
+  sandbox.AbortSignal = AbortSignal;
+  const costs = await sandbox.drivingCosts([
+    trip.start,
+    trip.finish,
+    good,
+    bad,
+  ]);
+  assert.equal(costs.routed, true);
+  assert.ok(costs.leg(trip.start, good));
+  assert.equal(costs.leg(trip.start, bad), null);
+});

@@ -301,17 +301,30 @@ async function rankByDriving(list, trip) {
     let data = await r.json();
     if (data.code !== "Ok" || !data.distances || !data.durations)
       return candidates;
-    // Reject excessive road snapping (for example a hiking summit far from a road).
-    const snapped =
-      data.sources?.every((p) => p.distance <= 400) &&
-      data.destinations?.every((p) => p.distance <= 400);
-    if (!snapped) return candidates;
+    if (
+      data.sources?.length !== points.length ||
+      data.destinations?.length !== points.length
+    )
+      return candidates;
+    // An off-road attraction must not invalidate every other drivable candidate.
+    const snapped = points.map(
+      (p, i) =>
+        Number.isFinite(data.sources[i].distance) &&
+        data.sources[i].distance <= 400 &&
+        Number.isFinite(data.destinations[i].distance) &&
+        data.destinations[i].distance <= 400,
+    );
     const leg = (a, b) => {
       let i = points.indexOf(a),
         j = points.indexOf(b),
         mi = data.distances[i]?.[j],
         min = data.durations[i]?.[j];
-      return mi == null || min == null
+      return !snapped[i] ||
+        !snapped[j] ||
+        !Number.isFinite(mi) ||
+        mi < 0 ||
+        !Number.isFinite(min) ||
+        min < 0
         ? null
         : { mi: mi / 1609.344, min: min / 60 };
     };
@@ -462,6 +475,7 @@ function showPlanSuggestions(list) {
 $("#planStopName").oninput = () => {
   selectedPlanSearchPlace = null;
   clearTimeout(planSearchTimer);
+  hidePlanSuggestions();
   let q = $("#planStopName").value.trim();
   if (q.length < 3) {
     hidePlanSuggestions();
@@ -658,18 +672,27 @@ async function drivingCosts(points) {
       const data = await r.json();
       if (
         data.code === "Ok" &&
-        data.sources?.every((p) => p.distance <= 400) &&
-        data.destinations?.every((p) => p.distance <= 400) &&
+        data.sources?.length === points.length &&
+        data.destinations?.length === points.length &&
         data.durations?.length === points.length &&
         data.distances?.length === points.length
       ) {
         const indices = new Map(points.map((p, i) => [p.lat + "," + p.lon, i]));
+        const snapped = points.map(
+          (p, i) =>
+            Number.isFinite(data.sources[i].distance) &&
+            data.sources[i].distance <= 400 &&
+            Number.isFinite(data.destinations[i].distance) &&
+            data.destinations[i].distance <= 400,
+        );
         leg = (a, b) => {
           const i = indices.get(a.lat + "," + a.lon),
             j = indices.get(b.lat + "," + b.lon),
             seconds = data.durations[i]?.[j],
             meters = data.distances[i]?.[j];
-          return !Number.isFinite(seconds) ||
+          return !snapped[i] ||
+            !snapped[j] ||
+            !Number.isFinite(seconds) ||
             seconds < 0 ||
             !Number.isFinite(meters) ||
             meters < 0
@@ -1676,6 +1699,8 @@ function wireRegionSearch() {
   if (!input) return;
   input.oninput = () => {
     selectedRegionPlace = null;
+    $("#regionSuggestions").replaceChildren();
+    $("#regionSuggestions").classList.add("hidden");
     state.regionCenter = null;
     previewPlanRoute();
     save();
@@ -2579,17 +2604,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v31");
+    let c = await caches.open("ride-along-v32");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=31",
-      "./core.js?v=31",
-      "./app.js?v=31",
-      "./route-efficiency.js?v=31",
-      "./planner.js?v=31",
-      "./places.js?v=31",
+      "./styles.css?v=32",
+      "./core.js?v=32",
+      "./app.js?v=32",
+      "./route-efficiency.js?v=32",
+      "./planner.js?v=32",
+      "./places.js?v=32",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2604,14 +2629,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=31",
-    "./core.js?v=31",
-    "./app.js?v=31",
-    "./route-efficiency.js?v=31",
-    "./planner.js?v=31",
-    "./places.js?v=31",
+    "./styles.css?v=32",
+    "./core.js?v=32",
+    "./app.js?v=32",
+    "./route-efficiency.js?v=32",
+    "./planner.js?v=32",
+    "./places.js?v=32",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v31") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v32") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2621,7 +2646,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v31");
+  if ("caches" in window) await caches.delete("ride-along-v32");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";
