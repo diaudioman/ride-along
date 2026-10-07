@@ -1,20 +1,22 @@
-const C = "ride-along-v30";
+const C = "ride-along-v31";
 const A = [
   "./",
   "./index.html",
-  "./styles.css?v=30",
-  "./core.js?v=30",
-  "./app.js?v=30",
-  "./route-efficiency.js?v=30",
-  "./planner.js?v=30",
-  "./places.js?v=30",
+  "./styles.css?v=31",
+  "./core.js?v=31",
+  "./app.js?v=31",
+  "./route-efficiency.js?v=31",
+  "./planner.js?v=31",
+  "./places.js?v=31",
   "./manifest.json",
 ];
 self.addEventListener("install", (e) =>
   e.waitUntil(
     caches
       .open(C)
-      .then((c) => c.addAll(A.map((url) => new Request(url, { cache: "reload" }))))
+      .then((c) =>
+        c.addAll(A.map((url) => new Request(url, { cache: "reload" }))),
+      )
       .then(() => self.skipWaiting()),
   ),
 );

@@ -67,3 +67,22 @@ Provider documentation reviewed 2026-10-06:
 Confirmed fixes: destination retained before a separate hotel finish; edit-plan endpoint restoration; destination selection required before building; location guards on Discover additions; stable custom-place IDs; duplicate-add protection; invalid-map pin exclusion; no unverified map route lines; saved planning filters; GPS freshness; completed-story replay; stale live-search response rejection. Custom endpoints offer visible match selection, including intentional distant locations.
 
 Automated coverage includes full-page initialization, itinerary creation/editing, offline routing, unknown/overseas places, skipped stops, budgets, road matrices, state corruption, injection escaping, and offline asset versions. Public API browser checks supplement fixtures. Phone GPS accuracy, background audio, OS interruptions, and actual airplane mode require physical-device verification and are not guaranteed by these checks.
+
+### October 7 review (v31)
+
+- Time planning inserts optional attractions into the route, preserves a fixed last-stop destination and a separate finish, and favors scenic stops only within the driving and time limits.
+- Final road totals are checked before saving. If necessary, only automatic additions are removed; selected stops require an explicit override to exceed the time target. Automatic additions require verified road detours.
+- Build and add-stop requests use isolated drafts. Changing a plan while routing or declining an over-budget addition cannot leave a partially saved itinerary.
+- Custom starts and finishes require choosing a search result. Saved selections and edit-plan endpoints survive reopening.
+- Five named trip snapshots can be saved, opened, replaced and deleted. Current-trip edits do not mutate saved copies. Trips and feedback remain device-local.
+- Not interested hides a place from suggestions, Discover and automatic narration, with undo in Discover. Visited history also has undo and stays shared across trips.
+- Verified route geometry survives offline reopening, marking visited and editing visit time. Unverified legacy trips are recalculated. Zero-minute visits are supported.
+- Maps label start, finish, selected stops and suggestions; skipped stops retain matching itinerary numbers. Next-stop navigation lets Maps determine the current origin.
+
+The automated regression suite covers these workflows, existing routing, storage,
+search, narration selection and offline asset consistency. Browser checks verify
+real public-provider responses and user flows. Physical-device GPS accuracy,
+background narration, audio interruptions and airplane-mode reopening remain
+unverified. Maps, fresh geocoding and attraction searches need their external
+providers. Scenic-road quality is not scored; scenic attraction selection and
+minimum driving time are separate from a scenic-road navigation service.

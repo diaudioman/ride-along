@@ -144,6 +144,7 @@ $("#planningMode").onchange = () => {
   syncModeUI();
   previewPlanRoute();
 };
+$("#planOverrideTime").onchange = previewPlanRoute;
 $("#customStart").onchange = previewPlanRoute;
 $("#customFinish").onchange = previewPlanRoute;
 function syncModeUI() {
@@ -226,12 +227,34 @@ async function roadRoute(points, geometry = false) {
     if (!r.ok) return null;
     let j = await r.json(),
       route = j.routes?.[0];
-    if (j.code !== "Ok" || !route) return null;
+    if (
+      j.code !== "Ok" ||
+      !route ||
+      !Number.isFinite(route.duration) ||
+      route.duration < 0 ||
+      !Number.isFinite(route.distance) ||
+      route.distance < 0 ||
+      route.legs?.length !== points.length - 1 ||
+      !route.legs.every(
+        (leg) =>
+          Number.isFinite(leg.duration) &&
+          leg.duration >= 0 &&
+          Number.isFinite(leg.distance) &&
+          leg.distance >= 0,
+      ) ||
+      j.waypoints?.length !== points.length ||
+      !j.waypoints.every(
+        (p) => Number.isFinite(p.distance) && p.distance <= 400,
+      )
+    )
+      return null;
     return {
       min: route.duration / 60,
       mi: route.distance / 1609.344,
       legs: route.legs || [],
-      geometry: route.geometry?.coordinates.map(([lon, lat]) => ({ lat, lon })),
+      geometry: route.geometry?.coordinates
+        ?.map(([lon, lat]) => ({ lat, lon }))
+        .filter(RouteEfficiency.mapped),
     };
   } catch (e) {
     return null;
@@ -348,9 +371,11 @@ function renderPlanStops() {
   state.planStops.forEach((p, i) => {
     let d = document.createElement("div");
     d.className = "planStopRow";
-    d.innerHTML = `<div class="stopNumber">${i + 1}</div><div class="stopInfo"><b>${escapeHTML(p.name)}</b><div class="meta">${p.lat != null ? "Mapped" : "Needs location"} • <label class="inlineVisit">Visit <select data-a="visit"><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">1 hr</option><option value="90">1.5 hr</option><option value="120">2 hr</option></select></label></div></div><div class="row stopReorder"><button type="button" data-a="up" aria-label="Move up">↑</button><button type="button" data-a="down" aria-label="Move down">↓</button><button type="button" data-a="remove">Remove</button></div>`;
+    d.innerHTML = `<div class="stopNumber">${i + 1}</div><div class="stopInfo"><b>${escapeHTML(p.name)}</b><div class="meta">${p.lat != null ? "Mapped" : "Needs location"} • <label class="inlineVisit">Visit <select data-a="visit"><option value="0">Drive through</option><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">1 hr</option><option value="90">1.5 hr</option><option value="120">2 hr</option></select></label></div></div><div class="row stopReorder"><button type="button" data-a="up" aria-label="Move up">↑</button><button type="button" data-a="down" aria-label="Move down">↓</button><button type="button" data-a="remove">Remove</button></div>`;
     let sel = d.querySelector("select");
-    sel.value = String(p.visit || 30);
+    if (![...sel.options].some((o) => +o.value === p.visit))
+      sel.add(new Option(formatMinutes(p.visit), String(p.visit)));
+    sel.value = String(p.visit ?? 30);
     sel.onchange = () => {
       p.visit = +sel.value;
       save();
@@ -380,18 +405,14 @@ function renderPlanStops() {
   previewPlanRoute();
 }
 function queuePlanStop(p) {
-  if (
-    state.planStops.some(
-      (x) => x.id === p.id || x.name.toLowerCase() === p.name.toLowerCase(),
-    )
-  ) {
+  if (state.planStops.some((x) => sameVisitedPlace(x, p))) {
     alert("That stop is already selected for the plan.");
     return;
   }
   state.planStops.push({
     ...p,
     id: p.id || "plan-" + Date.now(),
-    visit: p.visit || 30,
+    visit: p.visit ?? 30,
     cats: p.cats || ["Custom"],
     desc: p.desc || "Selected custom stop.",
     fact: p.fact || "Selected by you.",
@@ -618,23 +639,13 @@ function distantTripStops(trip) {
         RouteEfficiency.distanceToLine(p, anchors, miles) > 100),
   );
 }
-async function efficientStops(start, stops, finish) {
-  const active = stops.filter((p) => !p.skipped),
-    skipped = stops.filter((p) => p.skipped);
-  const fixedLast = finish === "last" ? active.at(-1) : null;
-  const end = finish === "return" ? start : fixedLast || finish;
-  const movable = fixedLast ? active.slice(0, -1) : active;
-  const points = [
-    start,
-    ...active,
-    ...(RouteEfficiency.mapped(end) ? [end] : []),
-  ];
+async function drivingCosts(points) {
   let leg = roadEstimate,
     routed = false;
   if (
     points.every(RouteEfficiency.mapped) &&
     points.length <= 90 &&
-    movable.length > 1
+    points.length > 1
   ) {
     try {
       const coords = points.map((p) => p.lon + "," + p.lat).join(";");
@@ -652,12 +663,16 @@ async function efficientStops(start, stops, finish) {
         data.durations?.length === points.length &&
         data.distances?.length === points.length
       ) {
+        const indices = new Map(points.map((p, i) => [p.lat + "," + p.lon, i]));
         leg = (a, b) => {
-          const i = points.indexOf(a),
-            j = points.indexOf(b),
+          const i = indices.get(a.lat + "," + a.lon),
+            j = indices.get(b.lat + "," + b.lon),
             seconds = data.durations[i]?.[j],
             meters = data.distances[i]?.[j];
-          return seconds == null || meters == null
+          return !Number.isFinite(seconds) ||
+            seconds < 0 ||
+            !Number.isFinite(meters) ||
+            meters < 0
             ? null
             : { min: seconds / 60, mi: meters / 1609.344 };
         };
@@ -665,188 +680,158 @@ async function efficientStops(start, stops, finish) {
       }
     } catch {}
   }
+  return { leg, routed };
+}
+function orderStops(start, stops, finish, leg) {
+  const active = stops.filter((p) => !p.skipped),
+    skipped = stops.filter((p) => p.skipped);
+  const fixedLast = finish === "last" ? active.at(-1) : null;
+  const end = finish === "return" ? start : fixedLast || finish;
+  const movable = fixedLast ? active.slice(0, -1) : active;
+  return [
+    ...RouteEfficiency.optimalOrder(start, movable, end, leg),
+    ...(fixedLast ? [fixedLast] : []),
+    ...skipped,
+  ];
+}
+async function efficientStops(start, stops, finish) {
+  const active = stops.filter((p) => !p.skipped);
+  const end = finish === "return" ? start : finish === "last" ? null : finish;
+  const points = [start, ...active, ...(end ? [end] : [])];
+  const { leg, routed } =
+    active.length > 1
+      ? await drivingCosts(points)
+      : { leg: roadEstimate, routed: false };
   return {
-    stops: [
-      ...RouteEfficiency.optimalOrder(start, movable, end, leg),
-      ...(fixedLast ? [fixedLast] : []),
-      ...skipped,
-    ],
+    stops: orderStops(start, stops, finish, leg),
     routed,
     leg,
   };
 }
+function planDraftKey() {
+  return JSON.stringify({
+    destination: state.regionCenter,
+    stops: state.planStops,
+    controls: Object.fromEntries(
+      [
+        ...planSettings,
+        "customRegion",
+        "start",
+        "finish",
+        "customStart",
+        "customFinish",
+        "planningMode",
+        "duration",
+      ].map((id) => [id, $("#" + id).value]),
+    ),
+    interests: $$("#interests .on").map((b) => b.textContent),
+    override: $("#planOverrideTime").checked,
+    location: $("#start").value === "gps" ? state.location : null,
+    visited: state.visited,
+    dismissed: state.dismissed,
+    favorites: state.favs,
+    endpoints: state.customEndpoints,
+  });
+}
+async function evaluateTrip(t, drivingLeg = roadEstimate) {
+  // Work on an isolated draft; cancelled or stale requests cannot save a partial trip.
+  t = structuredClone(t);
+  let current = t.start,
+    total = 0;
+  for (const stop of t.stops) {
+    if (stop.skipped) {
+      stop.driveMin = stop.driveMiles = 0;
+      continue;
+    }
+    const leg = drivingLeg(current, stop) || roadEstimate(current, stop);
+    stop.driveMin = Math.round(leg.min);
+    stop.driveMiles = leg.mi == null ? null : +leg.mi.toFixed(1);
+    total += leg.min + stop.visit;
+    current = stop;
+  }
+  const finish = mappedFinish(t);
+  const finalLeg = finish
+    ? drivingLeg(current, finish) || roadEstimate(current, finish)
+    : { min: 0, mi: 0 };
+  t.finalLeg = {
+    min: Math.round(finalLeg.min),
+    mi: finalLeg.mi == null ? null : +finalLeg.mi.toFixed(1),
+  };
+  t.estimated = Math.ceil(total + finalLeg.min - 1e-6);
+  t.roadVerified = false;
+  delete t.roadGeometry;
+  const points = [
+    t.start,
+    ...t.stops.filter((p) => !p.skipped),
+    ...(finish ? [finish] : []),
+  ];
+  const road = await roadRoute(points, true);
+  if (road) applyTripRoad(t, road, points.length);
+  return t;
+}
 async function build() {
   if (
     state.trip &&
-    !confirm("You already have a saved itinerary. Replace it with a new plan?")
+    !confirm(
+      "Replace your current itinerary? Named trips in Saved trips will stay available.",
+    )
   )
     return;
-  let placesFirst = $("#planningMode").value === "places",
-    budget = placesFirst ? 0 : +$("#duration").value,
-    max = +$("#pace").value,
-    rawRegion = "__custom__",
-    region = $("#customRegion").value.trim(),
-    override = placesFirst || $("#planOverrideTime").checked,
-    style = $("#style").value,
-    ints = $$("#interests .on").map((x) => x.textContent),
-    start = endpoint("#start"),
-    finish = endpoint("#finish");
-  $("#planMsg").textContent = "Building your itinerary…";
-  if (!region) {
-    $("#planMsg").textContent = "Enter a custom region or destination.";
-    return;
-  }
-  if (
-    !RouteEfficiency.mapped(state.regionCenter) ||
-    state.regionCenter.name !== region
-  ) {
+  const previousTrip = state.trip,
+    key = planDraftKey();
+  const unchanged = () => {
+    const same = key === planDraftKey() && state.trip === previousTrip;
+    if (!same)
+      $("#planMsg").textContent =
+        "Your plan changed while routing. Create the itinerary again with your updated choices.";
+    return same;
+  };
+  const placesFirst = $("#planningMode").value === "places";
+  const budget = placesFirst ? 0 : +$("#duration").value;
+  const keepSelected = placesFirst || $("#planOverrideTime").checked;
+  const max = +$("#pace").value;
+  const radius = +$("#planRadius").value || 5,
+    maxDetour = +$("#planDetour").value || 20;
+  const region = $("#customRegion").value.trim(),
+    destination = { ...state.regionCenter };
+  $("#planMsg").textContent = "Checking your selected locations…";
+  if (!RouteEfficiency.mapped(destination) || destination.name !== region) {
     $("#planMsg").textContent =
       "Choose your destination from the search results first.";
     return;
   }
-  ({ start, finish } = await resolvePlannerEndpoints());
-  if (!start) {
+  const { start, finish } = await resolvePlannerEndpoints();
+  if (!unchanged()) return;
+  if (!RouteEfficiency.mapped(start)) {
     $("#planMsg").textContent =
       $("#start").value === "gps"
-        ? "Use my location above, enter another start, or choose Explore around destination."
-        : "Enter a custom start.";
+        ? "Use my location above, choose another start, or Explore around destination."
+        : "Choose your starting location from the search results.";
     return;
   }
-  if (!finish) {
-    $("#planMsg").textContent = "Enter your hotel or custom destination.";
-    return;
-  }
-  const selectedStops = plannedStops(start, finish);
-  const distant = distantTripStops({ start, finish, stops: selectedStops });
-  const checkedRoute = distant.length
-    ? await roadRoute(
-        [
-          start,
-          ...selectedStops,
-          ...(typeof finish === "object"
-            ? [finish]
-            : finish === "return"
-              ? [start]
-              : []),
-        ],
-        true,
-      )
-    : null;
-  if (distant.length && !checkedRoute) {
-    $("#planMsg").textContent =
-      "Review far-away or unmapped stops before building: " +
-      distant.map((p) => p.name).join(", ") +
-      ". Remove them or select the correct local result.";
-    return;
-  }
-  let curated = plannerCandidates.length
-    ? plannerCandidates
-    : await discoverRegionCandidates(state.regionCenter, region);
-  let stops = selectedStops.map((p) => ({
-      ...p,
-      done: false,
-      skipped: false,
-    })),
-    cur = start,
-    used = 0;
-  stops.forEach((p) => {
-    let l = roadEstimate(cur, p);
-    p.driveMin = l.min;
-    p.driveMiles = l.mi;
-    used += l.min + p.visit;
-    cur = p;
-  });
-  let candidates = curated.filter(
-    (p) =>
-      RouteEfficiency.mapped(p) &&
-      miles(state.regionCenter, p) <= (+$("#planRadius").value || 5) &&
-      matchesPlanPreferences(p) &&
-      !stops.some((s) => s.id === p.id || s.name === p.name),
-  );
-  let targetMax = placesFirst ? stops.length : Math.max(max, stops.length);
-  while (candidates.length && stops.length < targetMax) {
-    candidates.sort((a, b) => {
-      let ctx = {
-        points: [
-          cur,
-          ...(finish === "last" ? [] : [finish === "return" ? start : finish]),
-        ],
-        slots: 1,
-      };
-      return (
-        (RouteEfficiency.bestInsertion(ctx, a, roadEstimate)?.min ?? Infinity) -
-        (a.cats?.includes("Scenic views") ? 5 : 0) -
-        ((RouteEfficiency.bestInsertion(ctx, b, roadEstimate)?.min ??
-          Infinity) -
-          (b.cats?.includes("Scenic views") ? 5 : 0))
-      );
-    });
-    const p = candidates.shift();
-    const insertion = RouteEfficiency.bestInsertion(
-      RouteEfficiency.context({ start: cur, finish, stops: [] }),
-      p,
-      roadEstimate,
-    );
-    if (!insertion || insertion.min > (+$("#planDetour").value || 20)) continue;
-    let leg = roadEstimate(cur, p),
-      reserve =
-        finish === "last"
-          ? 0
-          : roadEstimate(p, finish === "return" ? start : finish).min,
-      cost = leg.min + p.visit;
-    if (override || used + cost + reserve <= budget) {
-      stops.push({
-        ...p,
-        done: false,
-        skipped: false,
-        driveMin: leg.min,
-        driveMiles: leg.mi,
-      });
-      used += cost;
-      cur = p;
-    }
-  }
-  if (!stops.length && !RouteEfficiency.mapped(finish)) {
-    $("#planMsg").textContent = placesFirst
-      ? "Places-first mode needs at least one selected stop. Add places above or search for a stop first."
-      : "No attractions were returned for that region. Try a more specific city/park name or add selected stops.";
-    return;
-  }
-  $("#planMsg").textContent = "Finding the most efficient stop order…";
-  const optimized = await efficientStops(start, stops, finish);
-  stops = optimized.stops;
-  cur = start;
-  used = 0;
-  for (const p of stops) {
-    const l = optimized.leg(cur, p) || roadEstimate(cur, p);
-    p.driveMin = l.min;
-    p.driveMiles = l.mi;
-    used += l.min + p.visit;
-    cur = p;
-  }
-  let finalLeg =
-    finish === "last"
-      ? { min: 0, mi: 0 }
-      : optimized.leg(cur, finish === "return" ? start : finish) ||
-        roadEstimate(cur, finish === "return" ? start : finish);
-  let total = used + finalLeg.min,
-    initialOverride = override || total > budget;
   if (
-    total > budget &&
-    !override &&
-    !confirm(
-      `This trip is about ${total - budget} minutes over your target. Build anyway?`,
-    )
+    !finish ||
+    (typeof finish === "object" && !RouteEfficiency.mapped(finish))
   ) {
     $("#planMsg").textContent =
-      "Increase the time, remove a stop, or enable Override time limit.";
+      "Choose your finish location from the search results.";
     return;
   }
-  state.trip = {
+  const selected = plannedStops(start, finish)
+    .map((p) => AppCore.place({ ...p, done: false, skipped: false }))
+    .filter(Boolean);
+  if (selected.some((p) => !RouteEfficiency.mapped(p))) {
+    $("#planMsg").textContent =
+      "Select a mapped result for every stop before creating the itinerary.";
+    return;
+  }
+  const optimized = await efficientStops(start, selected, finish);
+  if (!unchanged()) return;
+  let draft = await evaluateTrip({
     region,
-    destination: { ...state.regionCenter },
+    destination,
     budget,
-    timeOverride: initialOverride,
+    timeOverride: keepSelected,
     planningMode: placesFirst ? "places" : "time",
     start,
     finish,
@@ -856,27 +841,120 @@ async function build() {
         : finish === "return"
           ? start.name
           : finish.name,
-    stops,
-    finalLeg,
-    estimated: total,
+    stops: optimized.stops,
     created: Date.now(),
-    style,
-  };
-  state.prefs = {
-    ...state.prefs,
-    startMode: $("#start").value,
-    finishMode: $("#finish").value,
-    customStart: $("#customStart").value,
-    customFinish: $("#customFinish").value,
-    duration: placesFirst ? state.prefs.duration || "180" : String(budget),
-    planningMode: placesFirst ? "places" : "time",
-    region: "__custom__",
-    customRegion: region,
-  };
-  await recalc();
+    style: $("#style").value,
+    planPrefs: { ...state.prefs },
+  });
+  if (!unchanged()) return;
+  const distant = distantTripStops(draft);
+  if (distant.length) {
+    $("#planMsg").textContent =
+      "Review far-away or unmapped stops before building: " +
+      distant.map((p) => p.name).join(", ") +
+      ". Remove them or select the correct local result.";
+    return;
+  }
+  if (budget && draft.estimated > budget && !keepSelected) {
+    $("#planMsg").textContent =
+      `Your selected route needs about ${formatMinutes(draft.estimated)}, beyond your ${formatMinutes(budget)} target. Increase the time, remove a selected stop, or enable Keep my selected stops.`;
+    return;
+  }
+  const automatic = new Set();
+  let unverifiedSuggestions = false;
+  if (!placesFirst && draft.estimated < budget) {
+    $("#planMsg").textContent = "Fitting nearby attractions into your route…";
+    const available = plannerCandidates.length
+      ? [...plannerCandidates]
+      : await discoverRegionCandidates(destination, region);
+    if (!unchanged()) return;
+    const candidates = available
+      .filter(
+        (p) =>
+          RouteEfficiency.mapped(p) &&
+          matchesPlanPreferences(p) &&
+          !draft.stops.some(
+            (s) => sameVisitedPlace(s, p) || miles(s, p) < 0.03,
+          ) &&
+          (draft.roadVerified && draft.roadGeometry?.length > 1
+            ? distanceToRoute(p, draft.roadGeometry)
+            : miles(destination, p)) <= radius,
+      )
+      .slice(0, 30)
+      .map((p) => AppCore.place(p));
+    const costs = await drivingCosts([
+      start,
+      ...draft.stops,
+      ...candidates,
+      ...(mappedFinish(draft) ? [mappedFinish(draft)] : []),
+    ]);
+    if (!unchanged()) return;
+    unverifiedSuggestions = candidates.length > 0 && !costs.routed;
+    // A last-stop finish is a fixed endpoint, including after suggested stops are inserted.
+    const fixedLast = finish === "last" ? draft.stops.at(-1) : null;
+    let predicted = draft.estimated,
+      added = 0;
+    while (costs.routed && candidates.length && added < max) {
+      const ctx = RouteEfficiency.context(draft);
+      if (fixedLast) ctx.slots--;
+      const ranked = candidates
+        .map((p) => ({
+          p,
+          insertion: RouteEfficiency.bestInsertion(ctx, p, costs.leg),
+        }))
+        .filter(
+          (x) =>
+            x.insertion &&
+            x.insertion.min <= maxDetour &&
+            predicted + x.insertion.min + x.p.visit <= budget,
+        )
+        .sort(
+          (a, b) =>
+            a.insertion.min -
+              suggestionBonus(a.p) -
+              (b.insertion.min - suggestionBonus(b.p)) ||
+            a.insertion.min - b.insertion.min,
+        );
+      if (!ranked.length) break;
+      const { p, insertion } = ranked[0];
+      candidates.splice(candidates.indexOf(p), 1);
+      draft.stops.splice(insertion.index, 0, {
+        ...p,
+        done: false,
+        skipped: false,
+      });
+      automatic.add(p.id);
+      predicted += insertion.min + p.visit;
+      added++;
+    }
+    draft.stops = orderStops(start, draft.stops, finish, costs.leg);
+    draft = await evaluateTrip(draft, costs.leg);
+    if (!unchanged()) return;
+    // Road totals can exceed matrix estimates. Remove only automatic additions until the target fits.
+    while (draft.estimated > budget && automatic.size) {
+      const p = [...draft.stops].reverse().find((p) => automatic.has(p.id));
+      automatic.delete(p.id);
+      draft.stops = draft.stops.filter((s) => s.id !== p.id);
+      draft = await evaluateTrip(draft, costs.leg);
+      if (!unchanged()) return;
+    }
+  }
+  if (!draft.stops.length && !RouteEfficiency.mapped(finish)) {
+    $("#planMsg").textContent =
+      "Add a selected stop, or choose a mapped finish location.";
+    return;
+  }
+  if (budget && draft.estimated > budget && !keepSelected) {
+    $("#planMsg").textContent =
+      "The final road route exceeds your time target. Increase the time or enable Keep my selected stops.";
+    return;
+  }
+  if (!unchanged()) return;
+  state.trip = draft;
   save();
-  $("#planMsg").textContent =
-    "Itinerary built with efficient stop ordering. Scenic stops favored when extra driving is small.";
+  $("#planMsg").textContent = unverifiedSuggestions
+    ? "Itinerary ready with your selected places. Automatic attractions were not added because driving detours could not be verified."
+    : "Itinerary ready. Stops ordered for efficient driving; scenic stops favored within your limits.";
   renderTrip();
   updateExisting();
   tab("trip");
@@ -930,14 +1008,29 @@ async function refreshTripRoad(t) {
       ...active,
       ...(mappedFinish(t) ? [mappedFinish(t)] : []),
     ];
+  const key = JSON.stringify(points);
   const routed = await roadRoute(points, true);
   if (
     seq !== tripRoadSeq ||
     state.trip !== t ||
+    key !==
+      JSON.stringify([
+        t.start,
+        ...t.stops.filter((p) => !p.skipped),
+        ...(mappedFinish(t) ? [mappedFinish(t)] : []),
+      ]) ||
     !routed ||
     routed.legs.length !== points.length - 1
   )
     return;
+  applyTripRoad(t, routed, points.length);
+  save();
+  renderTrip();
+}
+function applyTripRoad(t, routed, pointCount) {
+  if (routed.legs?.length !== pointCount - 1 || !Number.isFinite(routed.min))
+    return false;
+  const active = t.stops.filter((p) => !p.skipped);
   active.forEach((p, i) => {
     p.driveMin = Math.round(routed.legs[i].duration / 60);
     p.driveMiles = +(routed.legs[i].distance / 1609.344).toFixed(1);
@@ -949,12 +1042,10 @@ async function refreshTripRoad(t) {
         mi: +(last.distance / 1609.344).toFixed(1),
       }
     : { min: 0, mi: 0 };
-  t.estimated =
-    Math.round(routed.min) + active.reduce((n, p) => n + p.visit, 0);
+  t.estimated = Math.ceil(routed.min) + active.reduce((n, p) => n + p.visit, 0);
   t.roadVerified = true;
   t.roadGeometry = routed.geometry;
-  save();
-  renderTrip();
+  return true;
 }
 function mapsUrl(dest, origin) {
   let u = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest.lat != null ? dest.lat + "," + dest.lon : dest.name)}&travelmode=driving`;
@@ -1009,14 +1100,21 @@ function renderTripMap(fit = true) {
     }
     return;
   }
-  addMarker(t.start, "S", "startPin", "Start");
+  const sharedEndpoint =
+    mappedFinish(t) && miles(t.start, mappedFinish(t)) < 0.001;
+  addMarker(
+    t.start,
+    sharedEndpoint ? "S/F" : "S",
+    "startPin",
+    sharedEndpoint ? "Start and finish" : "Start",
+  );
   const excluded = new Set(distantTripStops(t).map((p) => p.id));
-  t.stops
-    .filter((p) => !p.skipped && !excluded.has(p.id))
-    .forEach((p, i) => addMarker(p, String(i + 1), "", p.name));
+  t.stops.forEach((p, i) => {
+    if (!p.skipped && !excluded.has(p.id))
+      addMarker(p, String(i + 1), "", p.name);
+  });
   let fin = mappedFinish(t);
-  if (fin && !(t.finish === "return" && t.start.lat != null))
-    addMarker(fin, "F", "finishPin", "Finish");
+  if (fin && !sharedEndpoint) addMarker(fin, "F", "finishPin", "Finish");
   let line = [t.start, ...t.stops.filter((p) => !p.skipped), fin]
     .filter((p) => p && p.lat != null && p.lon != null)
     .map((p) => [+p.lat, +p.lon]);
@@ -1089,7 +1187,7 @@ function renderTrip() {
   $("#tripBudget").value = String(t.budget || 0);
   $("#timeOverride").checked = !!t.timeOverride;
   $("#tripSummary").innerHTML =
-    `<b>${escapeHTML(t.region)}</b><p>${formatMinutes(t.estimated)} estimated total${t.budget ? ` of ${t.budget} min target` : " • time ignored"} • ${t.stops.length} stops</p><p class="meta">~${formatMinutes(driveTotal)} driving + ${formatMinutes(visitTotal)} at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${t.estimated - t.budget} min over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${formatMinutes(t.finalLeg.min)}${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
+    `<b>${escapeHTML(t.region)}</b><p>${formatMinutes(t.estimated)} estimated total${t.budget ? ` of ${formatMinutes(t.budget)} target` : " • no time limit"} • ${t.stops.filter((p) => !p.skipped).length} stops</p><p class="meta">${t.stops.filter((p) => p.done && !p.skipped).length} visited · ${remaining.length} remaining${t.stops.some((p) => p.skipped) ? ` · ${t.stops.filter((p) => p.skipped).length} skipped` : ""}</p><p class="meta">~${formatMinutes(driveTotal)} driving + ${formatMinutes(visitTotal)} at stops${t.planningMode === "places" ? " • built from selected places" : ""}</p><p class="meta">Start: ${escapeHTML(t.start.name)} • Finish: ${escapeHTML(t.finishLabel)} • ${t.roadVerified ? "road routing, no live traffic" : "approximate, roads not verified"}</p>${over ? `<p class="warning">Trip is about ${formatMinutes(t.estimated - t.budget)} over target.${t.timeOverride ? " Time override is ON." : " Turn on Override time limit to keep adding stops."}</p>` : ""}<p>Final endpoint leg: ~${formatMinutes(t.finalLeg.min)}${t.finalLeg.mi != null ? " / ~" + t.finalLeg.mi + " mi" : ""}</p>`;
   const distant = distantTripStops(t);
   if (distant.length) {
     $("#tripSummary").innerHTML =
@@ -1106,10 +1204,10 @@ function renderTrip() {
   }
   let n = distant.length ? null : remaining[0];
   $("#nextStop").innerHTML = n
-    ? `<div class="card next"><b>Next stop</b><h3>${escapeHTML(n.name)}</h3><p>~${n.driveMin} min drive • ${n.visit} min visit</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(n, state.location || t.start)}">Navigate in Google Maps</a> <button class="ghost" id="nextStory">Play story</button></div>`
+    ? `<div class="card next"><b>Next stop</b><h3>${escapeHTML(n.name)}</h3><p>~${n.driveMin} min from previous stop • ${n.visit} min visit</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(n)}">Navigate in Google Maps</a> <button class="ghost" id="nextStory">Play story</button></div>`
     : distant.length
       ? '<div class="card warning">Correct the stop locations above before navigating.</div>'
-      : `<div class="card success"><b>${t.stops.length ? "All sightseeing stops are complete." : "Your direct route is ready."}</b>${mappedFinish(t) ? `<p>Continue to ${escapeHTML(t.finishLabel)} when ready.</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(mappedFinish(t))}">Navigate to finish</a>` : ""}</div>`;
+      : `<div class="card success"><b>${t.stops.length ? "All stops visited or skipped." : "Your direct route is ready."}</b>${mappedFinish(t) ? `<p>Continue to ${escapeHTML(t.finishLabel)} when ready.</p><a class="actionLink" target="_blank" rel="noopener noreferrer" href="${mapsUrl(mappedFinish(t))}">Navigate to finish</a>` : ""}</div>`;
   if (n) $("#nextStory").onclick = () => speakPlace(n.id);
   $("#tripStops").innerHTML = "";
   renderTripMap();
@@ -1126,13 +1224,20 @@ function renderTrip() {
 function edit(i, a) {
   let s = state.trip.stops,
     p = s[i];
-  if (a === "done") setVisited(p, !p.done);
+  if (a === "done") return setVisited(p, !p.done);
+  if (a === "minus" || a === "plus") {
+    const previous = p.visit;
+    p.visit =
+      a === "minus" ? Math.max(0, p.visit - 5) : Math.min(720, p.visit + 5);
+    if (!p.skipped) state.trip.estimated += p.visit - previous;
+    save();
+    renderTrip();
+    return;
+  }
   if (a === "skip") p.skipped = !p.skipped;
   if (a === "up" && i) [s[i - 1], s[i]] = [s[i], s[i - 1]];
   if (a === "down" && i < s.length - 1) [s[i + 1], s[i]] = [s[i], s[i + 1]];
-  if (a === "minus") p.visit = Math.max(10, p.visit - 5);
-  if (a === "plus") p.visit += 5;
-  if (a === "story") speakPlace(p.id);
+  if (a === "story") return speakPlace(p.id);
   if (a === "remove") s.splice(i, 1);
   recalc();
   renderTrip();
@@ -1174,6 +1279,14 @@ $("#timeOverride").onchange = () => {
 $("#newPlan").onclick = () => {
   if (state.trip) {
     const t = state.trip;
+    state.prefs = { ...state.prefs, ...(t.planPrefs || {}) };
+    for (const id of planSettings)
+      if (state.prefs[id]) $("#" + id).value = state.prefs[id];
+    if (Array.isArray(state.prefs.interests))
+      $$("#interests button").forEach((b) =>
+        b.classList.toggle("on", state.prefs.interests.includes(b.textContent)),
+      );
+    $("#planOverrideTime").checked = !!t.timeOverride;
     if (RouteEfficiency.mapped(t.destination))
       state.regionCenter = { ...t.destination };
     $("#customRegion").value = state.regionCenter?.name || t.region;
@@ -1187,6 +1300,14 @@ $("#newPlan").onclick = () => {
       ]),
       Promise.resolve(t.start),
     );
+    state.customEndpoints = {
+      ...state.customEndpoints,
+      [JSON.stringify([
+        t.start.name,
+        state.regionCenter?.lat,
+        state.regionCenter?.lon,
+      ])]: { ...t.start },
+    };
     $("#finish").value = typeof t.finish === "string" ? t.finish : "custom";
     if (typeof t.finish === "object") {
       $("#customFinish").value = t.finish.name;
@@ -1198,6 +1319,13 @@ $("#newPlan").onclick = () => {
         ]),
         Promise.resolve(t.finish),
       );
+      state.customEndpoints[
+        JSON.stringify([
+          t.finish.name,
+          state.regionCenter?.lat,
+          state.regionCenter?.lon,
+        ])
+      ] = { ...t.finish };
     }
     if (t.budget) $("#duration").value = String(t.budget);
     state.planStops = state.trip.stops
@@ -1216,7 +1344,80 @@ function updateExisting() {
     $("#existingTrip").innerHTML =
       "<b>You have a saved trip.</b> Building a new plan will ask before replacing it.";
   } else $("#existingTrip").classList.add("hidden");
+  renderSavedTrips();
 }
+function renderSavedTrips() {
+  const box = $("#savedTripList"),
+    slot = $("#saveTripSlot");
+  box.replaceChildren();
+  const previousSlot = slot.value;
+  slot.replaceChildren(new Option("New saved trip", ""));
+  $("#savedTripCount").textContent = `${state.savedTrips.length} / 5`;
+  $("#saveNamedTrip").disabled = !state.trip;
+  if (!state.savedTrips.length) box.textContent = "No named trips saved yet.";
+  for (const entry of state.savedTrips) {
+    slot.add(new Option("Replace: " + entry.name, entry.id));
+    const row = document.createElement("article");
+    row.className = "savedTripRow";
+    row.innerHTML = `<b>${escapeHTML(entry.name)}</b><p class="meta">${escapeHTML(entry.trip.region)} · ${formatMinutes(entry.trip.estimated)} · ${entry.trip.stops.filter((p) => !p.skipped).length} stops</p><div class="row"><button class="ghost" data-saved="open">Open trip</button><button class="ghost" data-saved="remove">Delete</button></div>`;
+    row.querySelector('[data-saved="open"]').onclick = () =>
+      openSavedTrip(entry.id);
+    row.querySelector('[data-saved="remove"]').onclick = () => {
+      if (
+        !confirm(
+          `Delete saved trip “${entry.name}”? Your current itinerary stays available.`,
+        )
+      )
+        return;
+      state.savedTrips = state.savedTrips.filter((e) => e.id !== entry.id);
+      save();
+      renderSavedTrips();
+    };
+    box.append(row);
+  }
+  if (state.savedTrips.some((entry) => entry.id === previousSlot))
+    slot.value = previousSlot;
+}
+function openSavedTrip(id) {
+  const entry = state.savedTrips.find((e) => e.id === id);
+  if (!entry) return;
+  if (
+    state.trip &&
+    !confirm(
+      `Open “${entry.name}” in My Trip? Save your current itinerary first if you want to keep it.`,
+    )
+  )
+    return;
+  state.trip = structuredClone(entry.trip);
+  state.prefs = { ...state.prefs, ...(entry.prefs || {}) };
+  // Visited history is shared across trips; undoing a visit remains reversible.
+  for (const stop of state.trip.stops) stop.done = isVisited(stop);
+  state.regionCenter =
+    AppCore.point(state.trip.destination) || state.regionCenter;
+  save();
+  renderTrip();
+  updateExisting();
+  tab("trip");
+  refreshTripRoad(state.trip);
+}
+$("#saveNamedTrip").onclick = () => {
+  try {
+    state.savedTrips = AppCore.saveTripPreset(
+      state.savedTrips,
+      $("#saveTripName").value,
+      state.trip,
+      state.trip?.planPrefs || state.prefs,
+      $("#saveTripSlot").value,
+    );
+    const persisted = save();
+    renderSavedTrips();
+    $("#saveTripMsg").textContent = persisted
+      ? "Trip saved. Open it from Saved trips on Plan."
+      : "Trip kept in this session, but your browser could not save it. Keep this page open.";
+  } catch (error) {
+    $("#saveTripMsg").textContent = error.message;
+  }
+};
 let favOnly = false;
 function sameVisitedPlace(a, b) {
   return (
@@ -1229,6 +1430,58 @@ function sameVisitedPlace(a, b) {
 }
 function isVisited(p) {
   return (state.visited || []).some((v) => sameVisitedPlace(v, p));
+}
+function isDismissed(p) {
+  return state.dismissed.some((v) => sameVisitedPlace(v, p));
+}
+function setDismissed(p, dismissed = true) {
+  state.dismissed = state.dismissed.filter((v) => !sameVisitedPlace(v, p));
+  if (dismissed)
+    state.dismissed.push(AppCore.place({ ...p, dismissedAt: Date.now() }));
+  save();
+  renderDiscover();
+  renderLiveResults(liveSearchResults);
+  if (state.location)
+    renderPlaces(
+      "#nearbyPlaces",
+      nearest(state.location.lat, state.location.lon).slice(0, 12),
+    );
+  refreshPlanner();
+}
+function dismissedButton(p) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost dismissedButton";
+  button.textContent = isDismissed(p)
+    ? "Undo not interested"
+    : "Not interested";
+  button.setAttribute("aria-label", button.textContent + ": " + p.name);
+  button.onclick = () => setDismissed(p, !isDismissed(p));
+  return button;
+}
+function renderDismissed() {
+  const box = $("#dismissedPlaces");
+  box.replaceChildren();
+  if (!state.dismissed.length) box.textContent = "No hidden places yet.";
+  for (const p of [...state.dismissed].reverse()) {
+    const row = document.createElement("div"),
+      title = document.createElement("span");
+    row.className = "row feedbackRow";
+    title.textContent = p.name;
+    row.append(title, dismissedButton(p));
+    box.append(row);
+  }
+}
+function suggestionBonus(p) {
+  let bonus = state.favs.includes(p.id) ? 4 : 0;
+  if (
+    $$("#interests .on").some((b) => b.textContent === "Scenic views") &&
+    p.cats?.includes("Scenic views")
+  )
+    bonus += 5;
+  if ($("#style").value === "Hidden gems" && p.hidden) bonus += 3;
+  if ($("#style").value === "Highlights" && p.curated && !p.hidden) bonus += 3;
+  return bonus;
 }
 function setVisited(p, visited = true) {
   state.visited = (state.visited || []).filter((v) => !sameVisitedPlace(v, p));
@@ -1289,7 +1542,7 @@ function placeCard(p) {
   };
   d.querySelector(".story").onclick = () => speakPlace(p.id);
   d.querySelector(".add").onclick = () => addToTrip(p);
-  d.append(visitedButton(p));
+  d.append(visitedButton(p), dismissedButton(p));
   return d;
 }
 function renderPlaces(target, list) {
@@ -1301,10 +1554,12 @@ function renderPlaces(target, list) {
 }
 function renderDiscover() {
   renderVisited();
+  renderDismissed();
   let q = $("#search").value.toLowerCase(),
     r = $("#discoverRegion").value;
   let list = PLACES.filter(
     (p) =>
+      !isDismissed(p) &&
       (r === "all" || p.region === r) &&
       (!favOnly || state.favs.includes(p.id)) &&
       (p.name + " " + p.region + " " + p.desc + " " + p.cats.join(" "))
@@ -1333,7 +1588,7 @@ function livePlaceCard(p) {
     routeMeta = detourTags(p);
   d.innerHTML = `<div class="placeHead"><h3>${escapeHTML(p.name)}</h3><span class="tag">Live search</span></div><div class="tags">${p.type ? `<span class="tag">${escapeHTML(p.type)}</span>` : ""}${dist != null ? `<span class="tag">~${dist.toFixed(1)} mi away</span>` : ""}${routeMeta}</div><p>${escapeHTML(p.desc || "Place or point of interest from OpenStreetMap.")}</p><p class="meta">${escapeHTML(p.address || "")}</p><div class="row"><button class="ghost addLive">Add to trip</button><a target="_blank" rel="noopener noreferrer" href="${mapsUrl(p)}">Open in Maps</a></div>`;
   d.querySelector(".addLive").onclick = () => addToTrip(p);
-  d.append(visitedButton(p));
+  d.append(visitedButton(p), dismissedButton(p));
   return d;
 }
 let liveRenderSeq = 0;
@@ -1342,7 +1597,9 @@ async function renderLiveResults(list) {
     key = JSON.stringify(state.trip);
   const draw = (items) => {
     $("#liveResults").innerHTML = "";
-    items.forEach((p) => $("#liveResults").append(livePlaceCard(p)));
+    items
+      .filter((p) => !isDismissed(p))
+      .forEach((p) => $("#liveResults").append(livePlaceCard(p)));
   };
   draw(
     [...list].sort(
@@ -1359,7 +1616,13 @@ async function renderLiveResults(list) {
 }
 let searchLocationAsked = false;
 function ensureSearchLocation() {
-  if (searchLocationAsked || state.location || !navigator.geolocation) return;
+  if (
+    searchLocationAsked ||
+    (state.location &&
+      Date.now() - (state.location.at || 0) < 15 * 60 * 1000) ||
+    !navigator.geolocation
+  )
+    return;
   searchLocationAsked = true;
   navigator.geolocation.getCurrentPosition(
     (pos) => {
@@ -1444,7 +1707,12 @@ function wireRegionSearch() {
 async function geocodeMany(text, limit = 8, near = null) {
   const q = (text || "").trim();
   if (q.length < 3) return [];
-  const bias = near || state.regionCenter || state.location,
+  const bias =
+      near ||
+      state.regionCenter ||
+      (state.location && Date.now() - (state.location.at || 0) < 15 * 60 * 1000
+        ? state.location
+        : null),
     params = new URLSearchParams({
       q,
       limit: String(Math.min(10, limit)),
@@ -1866,7 +2134,10 @@ async function searchAlongRoute() {
     }
     liveSearchResults = ranked.filter(
       (p) =>
-        !isVisited(p) && p.detour && (!maxDetour || p.detour.min <= maxDetour),
+        !isVisited(p) &&
+        !isDismissed(p) &&
+        p.detour &&
+        (!maxDetour || p.detour.min <= maxDetour),
     );
     renderLiveResults(liveSearchResults);
     let approximate = liveSearchResults.some((p) => !p.detour.routed);
@@ -1928,8 +2199,9 @@ async function addToTripOnce(p) {
     alert("That place is already in your trip.");
     return;
   }
-  let key = JSON.stringify(state.trip),
-    ranked = await rankByDriving([p], state.trip);
+  const original = state.trip;
+  let key = JSON.stringify(original),
+    ranked = await rankByDriving([p], original);
   if (JSON.stringify(state.trip) !== key) {
     alert("Your trip changed. Please add the stop again.");
     return;
@@ -1938,10 +2210,10 @@ async function addToTripOnce(p) {
     alert("A drivable connection to this stop could not be found.");
     return false;
   }
-  const proposed = {
-    ...state.trip,
+  let proposed = {
+    ...original,
     roadVerified: false,
-    stops: [...state.trip.stops, p],
+    stops: [...original.stops, p],
   };
   if (
     distantTripStops(proposed).some((s) => s === p) &&
@@ -1953,24 +2225,27 @@ async function addToTripOnce(p) {
     return false;
   }
   let d = ranked[0]?.detour,
-    index = d?.index ?? state.trip.stops.length,
+    index = d?.index ?? original.stops.length,
     candidate = AppCore.place({ ...p, done: false, skipped: false });
-  state.trip.stops.splice(index, 0, candidate);
-  await recalc();
-  let excess = state.trip.estimated - state.trip.budget;
-  if (state.trip.budget > 0 && excess > 0 && !state.trip.timeOverride) {
+  proposed.stops = [...original.stops];
+  proposed.stops.splice(index, 0, candidate);
+  proposed = await evaluateTrip(proposed);
+  if (state.trip !== original || JSON.stringify(original) !== key) {
+    alert("Your trip changed. Please add the stop again.");
+    return false;
+  }
+  let excess = proposed.estimated - proposed.budget;
+  if (proposed.budget > 0 && excess > 0 && !proposed.timeOverride) {
     if (
       !confirm(
         `Adding this stop puts the estimated trip ${Math.ceil(excess)} minutes over target. Add anyway?`,
       )
     ) {
-      state.trip.stops.splice(index, 1);
-      recalc();
-      renderTrip();
-      return;
+      return false;
     }
-    state.trip.timeOverride = true;
+    proposed.timeOverride = true;
   }
+  state.trip = proposed;
   save();
   renderTrip();
   renderDiscover();
@@ -2017,7 +2292,7 @@ $("#addCustomStop").onclick = async () => {
 function nearest(lat, lon) {
   return [...PLACES]
     .map((p) => ({ ...p, d: miles({ lat, lon }, p) }))
-    .filter((p) => p.d <= 30)
+    .filter((p) => p.d <= 30 && !isDismissed(p) && !isVisited(p))
     .sort((a, b) => a.d - b.d);
 }
 function setLocation(pos) {
@@ -2067,7 +2342,8 @@ function allTourPlaces(includeFinished = false) {
     (p) =>
       p.lat != null &&
       p.lon != null &&
-      (includeFinished || (!p.skipped && !p.done && !isVisited(p))),
+      (includeFinished ||
+        (!p.skipped && !p.done && !isVisited(p) && !isDismissed(p))),
   );
 }
 async function enrichTourPlace(p) {
@@ -2303,17 +2579,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v30");
+    let c = await caches.open("ride-along-v31");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=30",
-      "./core.js?v=30",
-      "./app.js?v=30",
-      "./route-efficiency.js?v=30",
-      "./planner.js?v=30",
-      "./places.js?v=30",
+      "./styles.css?v=31",
+      "./core.js?v=31",
+      "./app.js?v=31",
+      "./route-efficiency.js?v=31",
+      "./planner.js?v=31",
+      "./places.js?v=31",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2328,14 +2604,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=30",
-    "./core.js?v=30",
-    "./app.js?v=30",
-    "./route-efficiency.js?v=30",
-    "./planner.js?v=30",
-    "./places.js?v=30",
+    "./styles.css?v=31",
+    "./core.js?v=31",
+    "./app.js?v=31",
+    "./route-efficiency.js?v=31",
+    "./planner.js?v=31",
+    "./places.js?v=31",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v30") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v31") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2345,7 +2621,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v30");
+  if ("caches" in window) await caches.delete("ride-along-v31");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";
@@ -2379,7 +2655,10 @@ if (AppCore.storageWarning) {
   $("#storageNotice").textContent = AppCore.storageWarning;
   $("#storageNotice").classList.remove("hidden");
 }
-if (state.trip) recalc();
+if (state.trip) {
+  if (state.trip.roadVerified) refreshTripRoad(state.trip);
+  else recalc();
+}
 for (const id of ["walking", "admission", "dirt", "style", "pace"])
   $("#" + id).onchange = previewPlanRoute;
 $("#reloadApp").onclick = () => location.reload();

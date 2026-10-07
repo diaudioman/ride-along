@@ -1,6 +1,57 @@
 const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const core = require("../core.js");
+test("saved trips are isolated snapshots, limited to five and replaceable explicitly", () => {
+  const trip = {
+    start: { name: "Start", lat: 35, lon: -111 },
+    finish: "return",
+    stops: [{ name: "Museum", visit: 30 }],
+  };
+  let entries = [];
+  for (let i = 0; i < 5; i++)
+    entries = core.saveTripPreset(entries, "Trip " + i, trip, {
+      walking: "easy",
+    });
+  assert.equal(entries.length, 5);
+  trip.stops[0].visit = 90;
+  assert.equal(entries[0].trip.stops[0].visit, 30);
+  assert.throws(
+    () => core.saveTripPreset(entries, "Sixth", trip),
+    /five slots/,
+  );
+  const replacement = core.saveTripPreset(
+    entries,
+    "Updated",
+    trip,
+    {},
+    entries[1].id,
+  );
+  assert.equal(replacement.length, 5);
+  assert.equal(replacement[1].trip.stops[0].visit, 90);
+  assert.equal(entries[1].name, "Trip 1");
+  assert.throws(() => core.saveTripPreset(entries, "", trip), /name/);
+  assert.throws(() => core.saveTripPreset(entries, "Name", null), /itinerary/);
+});
+test("legacy visited progress migrates and malformed saved trip entries are excluded", () => {
+  const trip = {
+    start: {},
+    finish: "last",
+    stops: [{ name: "Museum", done: true }],
+  };
+  const state = core.normalize({
+    trip,
+    savedTrips: [
+      null,
+      {},
+      { id: "a", name: "Good", trip },
+      { id: "a", name: "Duplicate", trip },
+    ],
+  });
+  assert.equal(state.visited[0].name, "Museum");
+  assert.equal(state.savedTrips.length, 1);
+  assert.deepEqual(state.dismissed, []);
+  assert.equal(core.normalize({ trip, visited: [] }).visited.length, 0);
+});
 test("corrupted saved JSON cannot crash startup", () => {
   const state = core.read({ getItem: () => "{broken" });
   assert.equal(state.trip, null);

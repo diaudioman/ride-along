@@ -18,7 +18,7 @@
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       crossorigin=""
     />
-    <link rel="stylesheet" href="styles.css?v=30" />
+    <link rel="stylesheet" href="styles.css?v=31" />
     <title>Ride Along</title>
   </head>
   <body>
@@ -44,6 +44,15 @@
           <p>Leave room for a little detour.</p>
         </div>
         <div id="existingTrip" class="notice hidden"></div>
+        <details class="card savedTripsPanel">
+          <summary>Saved trips <span id="savedTripCount">0 / 5</span></summary>
+          <p class="muted">
+            Save a named itinerary from My Trip, then open it here. Trips stay
+            on this device.
+          </p>
+          <div id="savedTripList"></div>
+          <p id="savedTripLoadMsg" class="muted" role="status"></p>
+        </details>
         <div class="card plannerCard">
           <div class="customRegionSearch">
             <label
@@ -90,6 +99,12 @@
               id="planMap"
               aria-label="Route and suggested attractions map"
             ></div>
+            <p class="mapLegend">
+              <span class="legendPin start">S</span> Start
+              <span class="legendPin">1</span> Selected stop
+              <span class="legendPin finish">F</span> Finish
+              <span class="legendDot"></span> Suggestion
+            </p>
             <p id="planMapStatus" class="muted" role="status"></p>
           </div>
           <div class="modeChooser">
@@ -167,6 +182,7 @@
             </div>
             <div class="planStopEntry">
               <select aria-label="Visit duration" id="planStopTime">
+                <option value="0">Drive through</option>
                 <option value="15">15 min</option>
                 <option value="30" selected>30 min</option>
                 <option value="45">45 min</option>
@@ -221,6 +237,10 @@
                 <div id="interests" class="chips"></div>
               </fieldset>
             </div>
+            <p class="muted">
+              Scenic attractions are favored when they fit your limits. Roads
+              are chosen for efficient driving; scenic roads are not rated.
+            </p>
           </details>
           <div id="planOverrideWrap">
             <label class="toggle planOverride"
@@ -256,6 +276,28 @@
           </div>
         </div>
         <div id="tripSummary" class="card"></div>
+        <details id="saveTripPanel" class="card">
+          <summary>Save this trip</summary>
+          <p class="muted">
+            Keep up to five named trips, including your visited and skipped
+            stops.
+          </p>
+          <label
+            >Trip name<input
+              id="saveTripName"
+              maxlength="80"
+              placeholder="Weekend around Sedona"
+          /></label>
+          <label
+            >Save to<select id="saveTripSlot">
+              <option value="">New saved trip</option>
+            </select></label
+          >
+          <button id="saveNamedTrip" type="button" class="ghost">
+            Save trip
+          </button>
+          <p id="saveTripMsg" class="muted" role="status"></p>
+        </details>
         <div class="card mapCard">
           <div class="sectionTitle">
             <h3>Trip map</h3>
@@ -265,6 +307,12 @@
             </div>
           </div>
           <div id="tripMap"></div>
+          <p class="mapLegend">
+            <span class="legendPin start">S</span> Start
+            <span class="legendPin">1</span> Stop
+            <span class="legendPin finish">F</span> Finish
+            <span class="legendDot gps"></span> You
+          </p>
           <p id="mapStatus" class="muted">
             Numbered pins follow your stop order. Route times are estimated
             until opened in live navigation.
@@ -298,6 +346,14 @@
               visit to suggest them again.
             </p>
             <div id="visitedPlaces"></div>
+          </details>
+          <details class="card">
+            <summary>Not interested</summary>
+            <p class="muted">
+              These places are hidden from suggestions. Undo to see one again.
+              Your selected stops stay in your trip.
+            </p>
+            <div id="dismissedPlaces"></div>
           </details>
           <h3>Find things to do</h3>
           <p class="muted">
@@ -569,10 +625,10 @@
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       crossorigin=""
     ></script>
-    <script src="core.js?v=30"></script>
-    <script src="places.js?v=30"></script>
-    <script src="route-efficiency.js?v=30"></script>
-    <script src="planner.js?v=30"></script>
-    <script src="app.js?v=30"></script>
+    <script src="core.js?v=31"></script>
+    <script src="places.js?v=31"></script>
+    <script src="route-efficiency.js?v=31"></script>
+    <script src="planner.js?v=31"></script>
+    <script src="app.js?v=31"></script>
   </body>
 </html>

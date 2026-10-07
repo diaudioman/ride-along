@@ -323,3 +323,414 @@ test("visited controls persist, suppress recommendations, and support undo", () 
     app.dom.window.close();
   }
 });
+
+function configureTimePlan(app, extra = "") {
+  vm.runInContext(
+    `
+    state.regionCenter={name:'Finish',lat:35,lon:-111};
+    document.querySelector('#customRegion').value='Finish';
+    document.querySelector('#planningMode').value='time';
+    document.querySelector('#duration').value='120';
+    resolvePlannerEndpoints=async()=>({start:{name:'Start',lat:35,lon:-111.1},finish:state.regionCenter});
+    discoverRegionCandidates=async()=>[];
+    drivingCosts=async()=>({leg:(a,b)=>({min:Math.abs(a.lon-b.lon)*200,mi:Math.abs(a.lon-b.lon)*50}),routed:true});
+    roadRoute=async points=>{
+      const legs=points.slice(1).map((p,i)=>({duration:Math.abs(points[i].lon-p.lon)*12000,distance:Math.abs(points[i].lon-p.lon)*80467.2}));
+      return {min:legs.reduce((n,p)=>n+p.duration/60,0),mi:legs.reduce((n,p)=>n+p.distance/1609.344,0),legs,geometry:points};
+    };
+    ${extra}
+  `,
+    app.context,
+  );
+}
+
+test("time planning inserts scenic stops before the fixed last-stop destination", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      resolvePlannerEndpoints=async()=>({start:{name:'Start',lat:35,lon:-111.1},finish:'last'});
+      plannerCandidates=[{id:'view',name:'Viewpoint',lat:35,lon:-111.08,visit:15,cats:['Scenic views']}];
+    `,
+    );
+    await vm.runInContext("build()", app.context);
+    const trip = JSON.parse(
+      vm.runInContext("JSON.stringify(state.trip)", app.context),
+    );
+    assert.equal(trip.stops[0].id, "view");
+    assert.equal(trip.stops.at(-1).requiredDestination, true);
+    assert.equal(trip.finish, "last");
+    assert.ok(trip.estimated <= 120);
+    assert.equal(trip.roadVerified, true);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("final road time removes automatic additions without removing selected stops", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      document.querySelector('#duration').value='90';
+      state.planStops=[{id:'must',name:'Selected museum',lat:35,lon:-111.09,visit:15,cats:['History']}];
+      plannerCandidates=[{id:'extra',name:'Optional view',lat:35,lon:-111.08,visit:30,cats:['Scenic views']}];
+      roadRoute=async points=>{
+        const min=points.some(p=>p.id==='extra')?100:20;
+        return {min,mi:5,legs:points.slice(1).map(()=>({duration:min*60/(points.length-1),distance:1000})),geometry:points};
+      };
+    `,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(vm.runInContext("state.trip.stops.length", app.context), 1);
+    assert.equal(
+      vm.runInContext("state.trip.stops[0].id", app.context),
+      "must",
+    );
+    assert.equal(vm.runInContext("state.trip.estimated", app.context), 35);
+    assert.equal(
+      vm.runInContext("state.trip.timeOverride", app.context),
+      false,
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("selected stops over the real road budget require the explicit time override", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      document.querySelector('#duration').value='60';
+      state.planStops=[{id:'must',name:'Museum',lat:35,lon:-111.08,visit:30,cats:['History']}];
+      roadRoute=async points=>({min:80,mi:40,legs:points.slice(1).map(()=>({duration:2400,distance:16093})),geometry:points});
+    `,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(vm.runInContext("state.trip", app.context), null);
+    assert.match(app.$("#planMsg").textContent, /selected route needs/);
+    app.$("#planOverrideTime").checked = true;
+    await vm.runInContext("build()", app.context);
+    assert.equal(vm.runInContext("state.trip.timeOverride", app.context), true);
+    assert.equal(vm.runInContext("state.trip.estimated", app.context), 110);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("changing the draft during asynchronous routing cannot overwrite the current itinerary", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      "resolvePlannerEndpoints=()=>new Promise(resolve=>window.finishResolution=resolve);",
+    );
+    const pending = vm.runInContext("build()", app.context);
+    app.$("#duration").value = "90";
+    vm.runInContext(
+      "window.finishResolution({start:{name:'Start',lat:35,lon:-111.1},finish:state.regionCenter})",
+      app.context,
+    );
+    await pending;
+    assert.equal(vm.runInContext("state.trip", app.context), null);
+    assert.match(app.$("#planMsg").textContent, /plan changed/);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("declining an over-budget addition leaves the itinerary and persisted state untouched", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(app);
+    await vm.runInContext("build()", app.context);
+    vm.runInContext("state.trip.budget=30;save();", app.context);
+    const before = app.w.localStorage.getItem("rideAlongStateV3");
+    app.w.confirm = () => false;
+    vm.runInContext(
+      "rankByDriving=async list=>list.map(p=>({...p,detour:{index:0,min:5,mi:1,routed:true}}));",
+      app.context,
+    );
+    await vm.runInContext(
+      "addToTrip({id:'extra',name:'Extra stop',lat:35,lon:-111.05,visit:60})",
+      app.context,
+    );
+    assert.equal(vm.runInContext("state.trip.stops.length", app.context), 0);
+    assert.equal(app.w.localStorage.getItem("rideAlongStateV3"), before);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("verified routes and visited progress survive offline reopening and marking visited", async () => {
+  const trip = {
+    start: { name: "Start", lat: 35, lon: -111.1 },
+    finish: "last",
+    stops: [
+      {
+        id: "a",
+        name: "Museum",
+        lat: 35,
+        lon: -111,
+        visit: 30,
+        driveMin: 20,
+        driveMiles: 5,
+      },
+    ],
+    estimated: 50,
+    roadVerified: true,
+    roadGeometry: [
+      { lat: 35, lon: -111.1 },
+      { lat: 35, lon: -111 },
+    ],
+    region: "Test",
+    finalLeg: { min: 0, mi: 0 },
+  };
+  const app = openApp(JSON.stringify({ trip }));
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(vm.runInContext("state.trip.roadVerified", app.context), true);
+    app.$('#tripStops [data-a="done"]').click();
+    assert.equal(vm.runInContext("state.trip.roadVerified", app.context), true);
+    assert.equal(vm.runInContext("state.trip.estimated", app.context), 50);
+    const reopened = openApp(app.w.localStorage.getItem("rideAlongStateV3"));
+    try {
+      assert.equal(
+        vm.runInContext("state.trip.stops[0].done", reopened.context),
+        true,
+      );
+      assert.match(reopened.$("#tripSummary").textContent, /1 visited/);
+      assert.equal(
+        vm.runInContext("state.trip.roadGeometry.length", reopened.context),
+        2,
+      );
+    } finally {
+      reopened.dom.window.close();
+    }
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("Not interested persists across reopening, hides recommendations, and supports undo", () => {
+  const app = openApp();
+  try {
+    const p = JSON.parse(
+      vm.runInContext("JSON.stringify(PLACES[0])", app.context),
+    );
+    app.$("#places .dismissedButton").click();
+    assert.equal(vm.runInContext("isDismissed(PLACES[0])", app.context), true);
+    assert.equal(
+      vm.runInContext("matchesPlanPreferences(PLACES[0])", app.context),
+      false,
+    );
+    assert.ok(!app.$("#places").textContent.includes(p.name));
+    const reopened = openApp(app.w.localStorage.getItem("rideAlongStateV3"));
+    try {
+      assert.ok(reopened.$("#dismissedPlaces").textContent.includes(p.name));
+      reopened.$("#dismissedPlaces .dismissedButton").click();
+      assert.equal(
+        vm.runInContext("isDismissed(PLACES[0])", reopened.context),
+        false,
+      );
+      assert.ok(reopened.$("#places").textContent.includes(p.name));
+    } finally {
+      reopened.dom.window.close();
+    }
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("five named trips survive reload, support replacement, and restore independent snapshots", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(app);
+    await vm.runInContext("build()", app.context);
+    for (let i = 0; i < 5; i++) {
+      app.$("#saveTripName").value = "Trip " + i;
+      app.$("#saveNamedTrip").click();
+    }
+    assert.equal(app.$("#savedTripCount").textContent, "5 / 5");
+    app.$("#saveTripName").value = "Sixth";
+    app.$("#saveNamedTrip").click();
+    assert.match(app.$("#saveTripMsg").textContent, /five slots/);
+    const id = vm.runInContext("state.savedTrips[0].id", app.context);
+    app.$("#saveTripSlot").value = id;
+    app.$("#saveTripName").value = "Updated first";
+    app.$("#saveNamedTrip").click();
+    const reopened = openApp(app.w.localStorage.getItem("rideAlongStateV3"));
+    try {
+      assert.match(reopened.$("#savedTripList").textContent, /Updated first/);
+      reopened.$('[data-saved="open"]').click();
+      assert.equal(reopened.$("#trip").classList.contains("active"), true);
+      vm.runInContext("state.trip.region='Changed current';", reopened.context);
+      assert.equal(
+        vm.runInContext("state.savedTrips[0].trip.region", reopened.context),
+        "Finish",
+      );
+    } finally {
+      reopened.dom.window.close();
+    }
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("an unselected custom hotel cannot silently use the first local or worldwide match", async () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      `
+      state.regionCenter={name:'Sedona',lat:34.87,lon:-111.76};
+      document.querySelector('#start').value='region';
+      document.querySelector('#finish').value='custom';
+      document.querySelector('#customFinish').value='Courtyard Sedona';
+      geocodeMany=async()=>[{name:'Wrong hotel',lat:34.8,lon:-111.7}];
+    `,
+      app.context,
+    );
+    const result = await vm.runInContext(
+      "resolvePlannerEndpoints()",
+      app.context,
+    );
+    assert.equal(result.finish, null);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("zero-minute visits remain zero in the editor and route preview", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      state.planStops=[{id:'pass',name:'Drive-through point',lat:35,lon:-111.08,visit:0,cats:['Scenic views']}];
+      document.querySelector('#planningMode').value='places';
+      renderPlanStops();
+    `,
+    );
+    assert.equal(app.$("#selectedPlanStops select").value, "0");
+    await vm.runInContext("build()", app.context);
+    assert.equal(vm.runInContext("state.trip.stops[0].visit", app.context), 0);
+    assert.equal(vm.runInContext("state.trip.estimated", app.context), 20);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("road routing rejects excessive snapping and malformed driving durations", async () => {
+  const app = openApp();
+  try {
+    let payload = {
+      code: "Ok",
+      waypoints: [{ distance: 0 }, { distance: 800 }],
+      routes: [
+        {
+          duration: 120,
+          distance: 200,
+          legs: [{ duration: 120, distance: 200 }],
+        },
+      ],
+    };
+    app.w.fetch = async () =>
+      new Response(JSON.stringify(payload), { status: 200 });
+    assert.equal(
+      await vm.runInContext(
+        "roadRoute([{lat:35,lon:-111},{lat:35,lon:-111.01}])",
+        app.context,
+      ),
+      null,
+    );
+    payload.waypoints[1].distance = 10;
+    payload.routes[0].legs[0].duration = null;
+    assert.equal(
+      await vm.runInContext(
+        "roadRoute([{lat:35,lon:-111},{lat:35,lon:-111.02}])",
+        app.context,
+      ),
+      null,
+    );
+    payload.routes[0].legs[0].duration = 120;
+    const valid = await vm.runInContext(
+      "roadRoute([{lat:35,lon:-111},{lat:35,lon:-111.03}])",
+      app.context,
+    );
+    assert.equal(valid.min, 2);
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("automatic attractions are withheld when road detours cannot be verified", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      plannerCandidates=[{id:'extra',name:'Unverified attraction',lat:35,lon:-111.08,visit:15,cats:['Scenic views']}];
+      drivingCosts=async()=>({leg:roadEstimate,routed:false});
+    `,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(vm.runInContext("state.trip.stops.length", app.context), 0);
+    assert.match(
+      app.$("#planMsg").textContent,
+      /detours could not be verified/,
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("scenic stops win a small driving tradeoff while staying within the time target", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `
+      document.querySelector('#duration').value='60';
+      plannerCandidates=[
+        {id:'ordinary',name:'Museum',lat:35,lon:-111.05,visit:30,cats:['History']},
+        {id:'scenic',name:'Panorama',lat:35,lon:-111.04,visit:30,cats:['Scenic views']}
+      ];
+      drivingCosts=async()=>({leg:(a,b)=>({min:Math.abs(a.lon-b.lon)*200 + ((a.id==='scenic'||b.id==='scenic')?2:0),mi:Math.abs(a.lon-b.lon)*50}),routed:true});
+    `,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(
+      vm.runInContext("state.trip.stops[0].id", app.context),
+      "scenic",
+    );
+    assert.equal(vm.runInContext("state.trip.stops.length", app.context), 1);
+    assert.ok(vm.runInContext("state.trip.estimated<=60", app.context));
+  } finally {
+    app.dom.window.close();
+  }
+});
+
+test("changing only visit duration preserves verified road geometry and adjusts the total", async () => {
+  const app = openApp();
+  try {
+    configureTimePlan(
+      app,
+      `state.planStops=[{id:'a',name:'Museum',lat:35,lon:-111.08,visit:30}];document.querySelector('#planningMode').value='places';`,
+    );
+    await vm.runInContext("build()", app.context);
+    const before = vm.runInContext("state.trip.estimated", app.context);
+    app.$('#tripStops [data-a="plus"]').click();
+    assert.equal(vm.runInContext("state.trip.roadVerified", app.context), true);
+    assert.equal(
+      vm.runInContext("state.trip.estimated", app.context),
+      before + 5,
+    );
+    assert.ok(vm.runInContext("state.trip.roadGeometry.length>1", app.context));
+  } finally {
+    app.dom.window.close();
+  }
+});

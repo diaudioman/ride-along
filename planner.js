@@ -22,27 +22,8 @@ async function resolvePlannerEndpoints() {
     let key = JSON.stringify([p.name, center?.lat, center?.lon]);
     if (RouteEfficiency.mapped(state.customEndpoints?.[key]))
       return state.customEndpoints[key];
-    if (!plannerGeoCache.has(key))
-      plannerGeoCache.set(
-        key,
-        geocodeMany(p.name, 8, center)
-          .then((results) => {
-            // Bias alone is not a boundary: reject worldwide fallback matches.
-            const nearby = results.filter(
-              (p) =>
-                RouteEfficiency.mapped(p) &&
-                (!center || miles(center, p) <= 100),
-            );
-            const p = nearby[0] || null;
-            if (!p) plannerGeoCache.delete(key);
-            return p;
-          })
-          .catch(() => {
-            plannerGeoCache.delete(key);
-            return null;
-          }),
-      );
-    return await plannerGeoCache.get(key);
+    // Typing a hotel name does not confirm a geographic match.
+    return plannerGeoCache.has(key) ? await plannerGeoCache.get(key) : null;
   }
   return { start: await resolve(start), finish: await resolve(finish) };
 }
@@ -149,15 +130,44 @@ function drawPlannerMap(points, line, suggestions, road) {
   if (plannerLayer) plannerMap.removeLayer(plannerLayer);
   plannerLayer = L.layerGroup().addTo(plannerMap);
   let bounds = [];
+  const sharedEndpoint =
+    points.length > 1 && miles(points[0], points.at(-1)) < 0.001;
   points.forEach((p, i) => {
     if (!RouteEfficiency.mapped(p)) return;
+    if (sharedEndpoint && i === points.length - 1) return;
     let ll = [p.lat, p.lon];
     bounds.push(ll);
     let label = document.createElement("span");
     label.textContent =
-      (i === 0 ? "Start: " : i === points.length - 1 ? "Finish: " : "Stop: ") +
-      (p.name || "");
-    L.marker(ll).addTo(plannerLayer).bindPopup(label);
+      (points.length === 1
+        ? "Destination: "
+        : i === 0
+          ? sharedEndpoint
+            ? "Start and finish: "
+            : "Start: "
+          : i === points.length - 1
+            ? "Finish: "
+            : "Stop: ") + (p.name || "");
+    const isFinish = i === points.length - 1 && points.length > 1;
+    const icon = mapIcon(
+      points.length === 1
+        ? "F"
+        : i === 0
+          ? sharedEndpoint
+            ? "S/F"
+            : "S"
+          : isFinish
+            ? "F"
+            : String(i),
+      points.length === 1
+        ? "finishPin"
+        : i === 0
+          ? "startPin"
+          : isFinish
+            ? "finishPin"
+            : "",
+    );
+    L.marker(ll, { icon }).addTo(plannerLayer).bindPopup(label);
   });
   if (line.length > 1)
     L.polyline(
@@ -201,19 +211,14 @@ function showPlannerSuggestions(list, trip) {
       driving = d
         ? `+${d.mi.toFixed(1)} mi · +${Math.ceil(d.min)} min driving`
         : "";
-    card.innerHTML = `<div><h4>${i + 1}. ${plannerEscape(p.name)}</h4><p>${plannerEscape(p.type || p.cats?.[0] || "Attraction")} · ${p.visit || 30} min visit</p></div><button type="button" class="ghost">Add stop</button><div class="tags">${d ? `<span class="tag">${driving}</span><span class="tag">${d.routed ? "Road estimate" : "Approximate driving estimate"}</span>` : `<span class="tag">${miles(state.regionCenter, p).toFixed(1)} mi from destination · straight line</span>`}</div>`;
+    card.innerHTML = `<div><h4>${i + 1}. ${plannerEscape(p.name)}</h4><p>${plannerEscape(p.type || p.cats?.[0] || "Attraction")} · ${p.visit ?? 30} min visit</p></div><button type="button" class="ghost">Add stop</button><div class="tags">${d ? `<span class="tag">${driving}</span><span class="tag">${d.routed ? "Road estimate" : "Approximate driving estimate"}</span>` : `<span class="tag">${miles(state.regionCenter, p).toFixed(1)} mi from destination · straight line</span>`}</div>`;
     card.querySelector("button").onclick = () => addPlannerSuggestion(p);
-    card.append(visitedButton(p));
+    card.append(visitedButton(p), dismissedButton(p));
     box.append(card);
   });
 }
 function addPlannerSuggestion(p) {
-  if (
-    state.planStops.some(
-      (s) => s.id === p.id || s.name.toLowerCase() === p.name.toLowerCase(),
-    )
-  )
-    return;
+  if (state.planStops.some((s) => sameVisitedPlace(s, p))) return;
   const index = p.detour?.index;
   queuePlanStop(p);
   if (Number.isInteger(index) && index < state.planStops.length - 1) {
@@ -250,7 +255,7 @@ async function loadPlanner(seq, force) {
       const names = invalid.map((p) => p.name).join(", ");
       $("#planMapStatus").textContent = invalid.length
         ? "Correct these saved stops: " + names
-        : "Finish location not found near your destination. Enter its city and state.";
+        : "Finish location not found. Choose the correct match from the search results, including its city and state.";
       $("#planRouteEstimate").textContent =
         "Route unavailable until the locations are corrected.";
       $("#planSuggestionsStatus").textContent =
@@ -280,7 +285,7 @@ async function loadPlanner(seq, force) {
         { mi: 0, min: 0 },
       );
     let visit = (trip?.stops || state.planStops).reduce(
-        (sum, p) => sum + (+p.visit || 30),
+        (sum, p) => sum + (p.visit ?? 30),
         0,
       ),
       total = drive.min + visit,
@@ -339,7 +344,7 @@ async function loadPlanner(seq, force) {
     ranked = ranked.filter((p) => {
       if (!trip) return true;
       if (!p.detour || p.detour.min > maxDetour) return false;
-      return !budget || total + p.detour.min + (+p.visit || 30) <= budget;
+      return !budget || total + p.detour.min + (p.visit ?? 30) <= budget;
     });
     plannerCandidates = ranked;
     let shown = ranked.slice(0, 12);

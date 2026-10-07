@@ -97,6 +97,31 @@
         : [],
       visited: Array.isArray(s.visited)
         ? s.visited.map(place).filter(Boolean)
+        : (Array.isArray(s.trip?.stops) ? s.trip.stops : [])
+            .filter((p) => p?.done)
+            .map(place)
+            .filter(Boolean),
+      dismissed: Array.isArray(s.dismissed)
+        ? s.dismissed.map(place).filter(Boolean)
+        : [],
+      savedTrips: Array.isArray(s.savedTrips)
+        ? s.savedTrips
+            .map((entry) => {
+              const saved = trip(entry?.trip);
+              return saved && text(entry.name).trim() && text(entry.id)
+                ? {
+                    ...entry,
+                    name: entry.name.trim().slice(0, 80),
+                    trip: saved,
+                  }
+                : null;
+            })
+            .filter(Boolean)
+            .filter(
+              (entry, i, entries) =>
+                entries.findIndex((e) => e.id === entry.id) === i,
+            )
+            .slice(0, 5)
         : [],
       favs: Array.isArray(s.favs)
         ? s.favs.filter((x) => typeof x === "string")
@@ -111,6 +136,36 @@
       regionCenter: point(s.regionCenter),
       location: point(s.location),
     };
+  }
+  function saveTripPreset(entries, name, current, prefs = {}, replaceId = "") {
+    name = text(name).trim().slice(0, 80);
+    if (!name) throw Error("Give this trip a name first.");
+    const saved = trip(current);
+    if (!saved) throw Error("Create an itinerary before saving a trip.");
+    const index = entries.findIndex((entry) => entry.id === replaceId);
+    if (replaceId && index < 0)
+      throw Error("That saved trip no longer exists.");
+    if (index < 0 && entries.length >= 5)
+      throw Error("All five slots are full. Choose a saved trip to replace.");
+    const entry = JSON.parse(
+      JSON.stringify({
+        id:
+          index >= 0
+            ? replaceId
+            : "trip-" +
+              Date.now() +
+              "-" +
+              Math.random().toString(36).slice(2, 8),
+        name,
+        trip: saved,
+        prefs,
+        savedAt: Date.now(),
+      }),
+    );
+    const result = [...entries];
+    if (index >= 0) result[index] = entry;
+    else result.push(entry);
+    return result;
   }
   let storageWarning = "";
   function read(storage) {
@@ -195,6 +250,7 @@
     place,
     trip,
     normalize,
+    saveTripPreset,
     read,
     write,
     appFetch,
@@ -218,7 +274,7 @@ function categoriesForTags(t) {
   return cats;
 }
 function matchesPlanPreferences(p) {
-  if (isVisited(p)) return false;
+  if (isVisited(p) || isDismissed(p)) return false;
   const value = (id) => document.querySelector(id)?.value;
   if (value("#walking") === "easy" && p.walk !== "easy") return false;
   if (
