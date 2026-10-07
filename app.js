@@ -57,7 +57,10 @@ function tab(id) {
   );
   window.scrollTo(0, 0);
   setTimeout(() => {
-    if (id === "trip" && tripMap) tripMap.invalidateSize();
+    if (id === "trip" && tripMap) {
+      tripMap.invalidateSize();
+      renderTripMap(true);
+    }
     if (id === "plan" && plannerMap) plannerMap.invalidateSize();
   }, 0);
 }
@@ -1167,12 +1170,18 @@ function renderTripMap(fit = true) {
   let line = [t.start, ...t.stops.filter((p) => !p.skipped), fin]
     .filter((p) => p && p.lat != null && p.lon != null)
     .map((p) => [+p.lat, +p.lon]);
-  if (t.roadVerified && t.roadGeometry?.length > 1)
-    L.polyline(t.roadGeometry?.map((p) => [p.lat, p.lon]) || line, {
+  const roadLine = t.roadVerified
+    ? (t.roadGeometry || [])
+        .filter(RouteEfficiency.mapped)
+        .map((p) => [p.lat, p.lon])
+    : [];
+  if (roadLine.length > 1) {
+    L.polyline(roadLine, {
       weight: 4,
       opacity: 0.72,
-      ...(!t.roadVerified ? { dashArray: "8 7" } : {}),
     }).addTo(tripMapLayer);
+    pts = pts.concat(roadLine);
+  }
   if (state.location) {
     let ll = [state.location.lat, state.location.lon];
     gpsMapMarker = L.marker(ll, { icon: mapIcon("●", "gpsPin") })
@@ -2636,17 +2645,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v34");
+    let c = await caches.open("ride-along-v35");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=34",
-      "./core.js?v=34",
-      "./app.js?v=34",
-      "./route-efficiency.js?v=34",
-      "./planner.js?v=34",
-      "./places.js?v=34",
+      "./styles.css?v=35",
+      "./core.js?v=35",
+      "./app.js?v=35",
+      "./route-efficiency.js?v=35",
+      "./planner.js?v=35",
+      "./places.js?v=35",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2661,14 +2670,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=34",
-    "./core.js?v=34",
-    "./app.js?v=34",
-    "./route-efficiency.js?v=34",
-    "./planner.js?v=34",
-    "./places.js?v=34",
+    "./styles.css?v=35",
+    "./core.js?v=35",
+    "./app.js?v=35",
+    "./route-efficiency.js?v=35",
+    "./planner.js?v=35",
+    "./places.js?v=35",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v34") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v35") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2678,7 +2687,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v34");
+  if ("caches" in window) await caches.delete("ride-along-v35");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

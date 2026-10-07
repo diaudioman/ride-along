@@ -169,11 +169,17 @@ function drawPlannerMap(points, line, suggestions, road) {
     );
     L.marker(ll, { icon }).addTo(plannerLayer).bindPopup(label);
   });
-  if (line.length > 1)
-    L.polyline(
-      line.map((p) => [p.lat, p.lon]),
-      { color: "#8d3f2b", weight: 4, ...(!road ? { dashArray: "7 7" } : {}) },
-    ).addTo(plannerLayer);
+  const routeLine = line
+    .filter(RouteEfficiency.mapped)
+    .map((p) => [p.lat, p.lon]);
+  if (routeLine.length > 1) {
+    L.polyline(routeLine, {
+      color: "#8d3f2b",
+      weight: 4,
+      ...(!road ? { dashArray: "7 7" } : {}),
+    }).addTo(plannerLayer);
+    bounds = bounds.concat(routeLine);
+  }
   suggestions.forEach((p, i) => {
     let ll = [p.lat, p.lon];
     bounds.push(ll);

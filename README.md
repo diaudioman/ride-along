@@ -68,7 +68,7 @@ Confirmed fixes: destination retained before a separate hotel finish; edit-plan 
 
 Automated coverage includes full-page initialization, itinerary creation/editing, offline routing, unknown/overseas places, skipped stops, budgets, road matrices, state corruption, injection escaping, and offline asset versions. Public API browser checks supplement fixtures. Phone GPS accuracy, background audio, OS interruptions, and actual airplane mode require physical-device verification and are not guaranteed by these checks.
 
-### October 7 review (v34)
+### October 7 review (v35)
 
 - Creating a trip discovers along-route attractions even while the preview is still loading.
 - Time planning inserts optional attractions into the route, preserves a fixed last-stop destination and a separate finish, and favors scenic stops only within the driving and time limits.
@@ -81,6 +81,7 @@ Automated coverage includes full-page initialization, itinerary creation/editing
 - Verified route geometry survives offline reopening, marking visited and editing visit time. Unverified legacy trips are recalculated. Zero-minute visits are supported.
 - A place too far from a road is excluded individually from driving recommendations, preserving valid suggestions nearby.
 - Maps label start, finish, selected stops and suggestions; skipped stops retain matching itinerary numbers. Next-stop navigation lets Maps determine the current origin.
+- Both maps fit the entire road route, including curves beyond the stops. My Trip refits when opened.
 
 The automated regression suite covers these workflows, existing routing, storage,
 search, narration selection and offline asset consistency. Browser checks verify
