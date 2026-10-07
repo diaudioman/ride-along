@@ -618,6 +618,63 @@ function distantTripStops(trip) {
         RouteEfficiency.distanceToLine(p, anchors, miles) > 100),
   );
 }
+async function efficientStops(start, stops, finish) {
+  const active = stops.filter((p) => !p.skipped),
+    skipped = stops.filter((p) => p.skipped);
+  const fixedLast = finish === "last" ? active.at(-1) : null;
+  const end = finish === "return" ? start : fixedLast || finish;
+  const movable = fixedLast ? active.slice(0, -1) : active;
+  const points = [
+    start,
+    ...active,
+    ...(RouteEfficiency.mapped(end) ? [end] : []),
+  ];
+  let leg = roadEstimate,
+    routed = false;
+  if (
+    points.every(RouteEfficiency.mapped) &&
+    points.length <= 90 &&
+    movable.length > 1
+  ) {
+    try {
+      const coords = points.map((p) => p.lon + "," + p.lat).join(";");
+      const r = await appFetch(
+        "https://router.project-osrm.org/table/v1/driving/" +
+          coords +
+          "?annotations=distance,duration",
+        { signal: AbortSignal.timeout(10000) },
+      );
+      const data = await r.json();
+      if (
+        data.code === "Ok" &&
+        data.sources?.every((p) => p.distance <= 400) &&
+        data.destinations?.every((p) => p.distance <= 400) &&
+        data.durations?.length === points.length &&
+        data.distances?.length === points.length
+      ) {
+        leg = (a, b) => {
+          const i = points.indexOf(a),
+            j = points.indexOf(b),
+            seconds = data.durations[i]?.[j],
+            meters = data.distances[i]?.[j];
+          return seconds == null || meters == null
+            ? null
+            : { min: seconds / 60, mi: meters / 1609.344 };
+        };
+        routed = true;
+      }
+    } catch {}
+  }
+  return {
+    stops: [
+      ...RouteEfficiency.optimalOrder(start, movable, end, leg),
+      ...(fixedLast ? [fixedLast] : []),
+      ...skipped,
+    ],
+    routed,
+    leg,
+  };
+}
 async function build() {
   if (
     state.trip &&
@@ -718,7 +775,10 @@ async function build() {
       };
       return (
         (RouteEfficiency.bestInsertion(ctx, a, roadEstimate)?.min ?? Infinity) -
-        (RouteEfficiency.bestInsertion(ctx, b, roadEstimate)?.min ?? Infinity)
+        (a.cats?.includes("Scenic views") ? 5 : 0) -
+        ((RouteEfficiency.bestInsertion(ctx, b, roadEstimate)?.min ??
+          Infinity) -
+          (b.cats?.includes("Scenic views") ? 5 : 0))
       );
     });
     const p = candidates.shift();
@@ -752,10 +812,23 @@ async function build() {
       : "No attractions were returned for that region. Try a more specific city/park name or add selected stops.";
     return;
   }
+  $("#planMsg").textContent = "Finding the most efficient stop order…";
+  const optimized = await efficientStops(start, stops, finish);
+  stops = optimized.stops;
+  cur = start;
+  used = 0;
+  for (const p of stops) {
+    const l = optimized.leg(cur, p) || roadEstimate(cur, p);
+    p.driveMin = l.min;
+    p.driveMiles = l.mi;
+    used += l.min + p.visit;
+    cur = p;
+  }
   let finalLeg =
     finish === "last"
       ? { min: 0, mi: 0 }
-      : roadEstimate(cur, finish === "return" ? start : finish);
+      : optimized.leg(cur, finish === "return" ? start : finish) ||
+        roadEstimate(cur, finish === "return" ? start : finish);
   let total = used + finalLeg.min,
     initialOverride = override || total > budget;
   if (
@@ -802,7 +875,8 @@ async function build() {
   };
   await recalc();
   save();
-  $("#planMsg").textContent = "Itinerary built.";
+  $("#planMsg").textContent =
+    "Itinerary built with efficient stop ordering. Scenic stops favored when extra driving is small.";
   renderTrip();
   updateExisting();
   tab("trip");
@@ -1063,29 +1137,21 @@ function edit(i, a) {
   recalc();
   renderTrip();
 }
-function optimizeTrip() {
-  let t = state.trip;
+async function optimizeTrip() {
+  const t = state.trip;
   if (!t || t.stops.length < 2) return;
-  let left = [...t.stops],
-    cur = t.start,
-    out = [];
-  while (left.length) {
-    let best = 0,
-      bestD = Infinity;
-    left.forEach((p, i) => {
-      let d = miles(cur, p);
-      if (d != null && d < bestD) {
-        bestD = d;
-        best = i;
-      }
-    });
-    let p = left.splice(best, 1)[0];
-    out.push(p);
-    cur = p;
+  const key = JSON.stringify(t),
+    button = $("#optimizeTrip");
+  button.disabled = true;
+  try {
+    const result = await efficientStops(t.start, t.stops, t.finish);
+    if (state.trip !== t || JSON.stringify(t) !== key) return;
+    t.stops = result.stops;
+    await recalc();
+    renderTrip();
+  } finally {
+    button.disabled = false;
   }
-  t.stops = out;
-  recalc();
-  renderTrip();
 }
 window.optimizeTrip = optimizeTrip;
 $("#optimizeTrip").onclick = optimizeTrip;
@@ -2175,17 +2241,17 @@ $("#downloadOffline").onclick = async () => {
   }
   try {
     p.value = 20;
-    let c = await caches.open("ride-along-v28");
+    let c = await caches.open("ride-along-v29");
     p.value = 50;
     await c.addAll([
       "./",
       "./index.html",
-      "./styles.css?v=28",
-      "./core.js?v=28",
-      "./app.js?v=28",
-      "./route-efficiency.js?v=28",
-      "./planner.js?v=28",
-      "./places.js?v=28",
+      "./styles.css?v=29",
+      "./core.js?v=29",
+      "./app.js?v=29",
+      "./route-efficiency.js?v=29",
+      "./planner.js?v=29",
+      "./places.js?v=29",
       "./manifest.json",
     ]);
     p.value = 100;
@@ -2200,14 +2266,14 @@ $("#downloadOffline").onclick = async () => {
 $("#checkOffline").onclick = async () => {
   let required = [
     "./index.html",
-    "./styles.css?v=28",
-    "./core.js?v=28",
-    "./app.js?v=28",
-    "./route-efficiency.js?v=28",
-    "./planner.js?v=28",
-    "./places.js?v=28",
+    "./styles.css?v=29",
+    "./core.js?v=29",
+    "./app.js?v=29",
+    "./route-efficiency.js?v=29",
+    "./planner.js?v=29",
+    "./places.js?v=29",
   ];
-  let cache = "caches" in window ? await caches.open("ride-along-v28") : null;
+  let cache = "caches" in window ? await caches.open("ride-along-v29") : null;
   let ok =
     cache &&
     (await Promise.all(required.map((p) => cache.match(p)))).every(Boolean);
@@ -2217,7 +2283,7 @@ $("#checkOffline").onclick = async () => {
     : "Core offline package not found.";
 };
 $("#removeOffline").onclick = async () => {
-  if ("caches" in window) await caches.delete("ride-along-v28");
+  if ("caches" in window) await caches.delete("ride-along-v29");
   $("#offlineProgress").value = 0;
   $("#offlineStatus").textContent =
     "Offline app cache removed. Your saved trip remains in local storage.";

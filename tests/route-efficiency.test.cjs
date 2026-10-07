@@ -134,3 +134,36 @@ test("offline routing returns honest approximate insertion estimates", async () 
   assert.equal(result[0].detour.index, 0);
   assert.equal(result[0].detour.routed, undefined);
 });
+
+test("automatic stop order minimizes directed driving time including the fixed finish", () => {
+  const r = require("../route-efficiency.js");
+  const start = { id: 0 },
+    stops = [{ id: 1 }, { id: 2 }, { id: 3 }],
+    end = { id: 4 };
+  const costs = [
+    [0, 9, 1, 8, 20],
+    [8, 0, 9, 1, 8],
+    [8, 1, 0, 9, 9],
+    [8, 9, 9, 0, 1],
+    [9, 9, 9, 9, 0],
+  ];
+  const order = r.optimalOrder(start, stops, end, (a, b) => ({
+    min: costs[a.id][b.id],
+  }));
+  assert.deepEqual(
+    order.map((p) => p.id),
+    [2, 1, 3],
+  );
+  assert.deepEqual(
+    stops.map((p) => p.id),
+    [1, 2, 3],
+  );
+});
+test("unreachable permutations preserve all selected stops without silently dropping any", () => {
+  const r = require("../route-efficiency.js"),
+    stops = [{ id: 1 }, { id: 2 }];
+  assert.deepEqual(
+    r.optimalOrder({}, stops, {}, () => null),
+    stops,
+  );
+});

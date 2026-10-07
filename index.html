@@ -18,7 +18,7 @@
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       crossorigin=""
     />
-    <link rel="stylesheet" href="styles.css?v=28" />
+    <link rel="stylesheet" href="styles.css?v=29" />
     <title>Ride Along</title>
   </head>
   <body>
@@ -237,7 +237,13 @@
           </div>
           <button id="findRegionThings" type="button" class="ghost wideAction">
             Refresh suggested places</button
-          ><button id="buildTrip" class="primary">Create itinerary</button>
+          ><button
+            title="Automatically order stops for efficient driving"
+            id="buildTrip"
+            class="primary"
+          >
+            Create itinerary
+          </button>
           <p id="planMsg" class="muted"></p>
         </div>
       </section>
@@ -555,10 +561,10 @@
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       crossorigin=""
     ></script>
-    <script src="core.js?v=28"></script>
-    <script src="places.js?v=28"></script>
-    <script src="route-efficiency.js?v=28"></script>
-    <script src="planner.js?v=28"></script>
-    <script src="app.js?v=28"></script>
+    <script src="core.js?v=29"></script>
+    <script src="places.js?v=29"></script>
+    <script src="route-efficiency.js?v=29"></script>
+    <script src="planner.js?v=29"></script>
+    <script src="app.js?v=29"></script>
   </body>
 </html>

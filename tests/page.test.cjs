@@ -265,3 +265,29 @@ test("direct trip retains its named finish without turning the hotel into a sigh
     app.dom.window.close();
   }
 });
+
+test("Create itinerary automatically reorders stops and preserves the finish", async () => {
+  const app = openApp();
+  try {
+    vm.runInContext(
+      `state.regionCenter={name:'Finish',lat:35,lon:-111};
+ state.planStops=[{id:'far',name:'Far',lat:35,lon:-111.1,visit:10},{id:'near',name:'Near',lat:35,lon:-111.8,visit:10}];
+ document.querySelector('#customRegion').value='Finish';document.querySelector('#planningMode').value='places';
+ resolvePlannerEndpoints=async()=>({start:{name:'Start',lat:35,lon:-112},finish:state.regionCenter});
+ discoverRegionCandidates=async()=>[];`,
+      app.context,
+    );
+    await vm.runInContext("build()", app.context);
+    assert.equal(
+      vm.runInContext("state.trip.stops[0].id", app.context),
+      "near",
+    );
+    assert.equal(vm.runInContext("state.trip.stops[1].id", app.context), "far");
+    assert.equal(
+      vm.runInContext("state.trip.finish.name", app.context),
+      "Finish",
+    );
+  } finally {
+    app.dom.window.close();
+  }
+});
